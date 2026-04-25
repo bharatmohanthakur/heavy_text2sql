@@ -1,0 +1,212 @@
+{
+  "generated_at": "2026-04-25T09:14:47.524764+00:00",
+  "metrics": {
+    "n_cases": 3,
+    "schema_linking_recall": 0.0,
+    "join_path_exactness": 0.6666666666666666,
+    "sql_syntactic_validity": 1.0,
+    "execution_accuracy": 0.0,
+    "descriptor_leakage_rate": 0.0,
+    "latency_total_ms_p50": 4897.373542014975,
+    "latency_total_ms_p95": 5185.328082996421,
+    "latency_total_ms_p99": 5185.328082996421,
+    "per_stage_p50": {
+      "context+llm": 1908.2436250173487,
+      "execute": 12.67204200848937,
+      "few_shots": 769.6827920153737,
+      "viz+desc": 1266.036625020206,
+      "total_ms": 4897.373542014975,
+      "entity_resolve": 0.03229198046028614,
+      "validate+repair": 32.371332985349,
+      "table_retrieve": 532.7538329875097,
+      "steiner": 1.5638750046491623,
+      "domain_route": 0.06654200842604041
+    }
+  },
+  "cases": [
+    {
+      "nl_question": "Hispanic students in the district",
+      "gold_id": "d49ededd-ff21-477e-b47a-48fb7d52ea90",
+      "gold_tables": [
+        "edfi.Student",
+        "edfi.StudentEducationOrganizationAssociation",
+        "edfi.OldEthnicityDescriptor"
+      ],
+      "generated_sql": "SELECT DISTINCT \"edfi\".\"studenteducationorganizationassociation\".\"studentusi\" FROM \"edfi\".\"studenteducationorganizationassociation\" JOIN \"edfi\".\"descriptor\" ON \"edfi\".\"studenteducationorganizationassociation\".\"oldethnicitydescriptorid\" = \"edfi\".\"descriptor\".\"descriptorid\" WHERE \"edfi\".\"descriptor\".\"codevalue\" = 'Hispanic' LIMIT 1000",
+      "gold_sql": "SELECT DISTINCT s.studentusi, s.firstname, s.lastsurname\nFROM edfi.student s\nJOIN edfi.studenteducationorganizationassociation seoa\n  ON s.studentusi = seoa.studentusi\nJOIN edfi.descriptor d\n  ON seoa.oldethnicitydescriptorid = d.descriptorid\nWHERE d.codevalue = 'Hispanic'\nORDER BY s.lastsurname",
+      "retrieved_tables": [
+        "edfi.LocalEducationAgencyCategoryDescriptor",
+        "edfi.StudentDemographic",
+        "edfi.TermDescriptor",
+        "edfi.School",
+        "edfi.PrimaryLearningDeviceAwayFromSchoolDescriptor",
+        "edfi.MagnetSpecialProgramEmphasisSchoolDescriptor",
+        "edfi.StudentEducationOrganizationAssociationDisplacedStudent",
+        "edfi.AssessmentReportingMethodDescriptor"
+      ],
+      "join_tree_nodes": [
+        "edfi.AssessmentReportingMethodDescriptor",
+        "edfi.Descriptor",
+        "edfi.EducationOrganization",
+        "edfi.LocalEducationAgencyCategoryDescriptor",
+        "edfi.MagnetSpecialProgramEmphasisSchoolDescriptor",
+        "edfi.PrimaryLearningDeviceAwayFromSchoolDescriptor",
+        "edfi.School",
+        "edfi.StudentDemographic",
+        "edfi.StudentEducationOrganizationAssociation",
+        "edfi.StudentEducationOrganizationAssociationDisplacedStudent",
+        "edfi.TermDescriptor"
+      ],
+      "domains": [
+        "StudentIdentificationAndDemographics",
+        "Enrollment"
+      ],
+      "timings_ms": {
+        "domain_route": 0.050915987230837345,
+        "entity_resolve": 0.019625003915280104,
+        "table_retrieve": 527.5274579762481,
+        "steiner": 1.0388329974375665,
+        "few_shots": 769.6827920153737,
+        "context+llm": 2559.457833005581,
+        "validate+repair": 32.371332985349,
+        "execute": 7.546333014033735,
+        "viz+desc": 1287.5987500301562,
+        "total_ms": 5185.328082996421
+      },
+      "schema_linking_hit": false,
+      "join_path_hit": false,
+      "sql_valid": true,
+      "execution_match": false,
+      "leaked_descriptors": [],
+      "error": null,
+      "description": "The district has 195 Hispanic students enrolled, as identified in the dataset. Examples include students with IDs 1, 4, and 10, among others."
+    },
+    {
+      "nl_question": "List all assessment results for a student",
+      "gold_id": "e1419fba-9fb4-4da8-ba79-9f98cadad936",
+      "gold_tables": [
+        "edfi.StudentAssessment",
+        "edfi.StudentAssessmentScoreResult",
+        "edfi.Assessment"
+      ],
+      "generated_sql": "SELECT \"a\".\"assessmenttitle\", \"sasr\".\"result\", \"sasr\".\"resultdatatypetypedescriptorid\" FROM \"edfi\".\"studentassessment\" \"sa\" JOIN \"edfi\".\"studentassessmentscoreresult\" \"sasr\" ON \"sa\".\"studentusi\" = \"sasr\".\"studentusi\" AND \"sa\".\"assessmentidentifier\" = \"sasr\".\"assessmentidentifier\" JOIN \"edfi\".\"assessment\" \"a\" ON \"sa\".\"assessmentidentifier\" = \"a\".\"assessmentidentifier\" LIMIT 1000",
+      "gold_sql": "SELECT a.assessmenttitle, sasr.result, sasr.resultdatatypetypedescriptorid\nFROM edfi.studentassessment sa\nJOIN edfi.studentassessmentscoreresult sasr\n  ON sa.studentusi = sasr.studentusi\n AND sa.assessmentidentifier = sasr.assessmentidentifier\nJOIN edfi.assessment a\n  ON sa.assessmentidentifier = a.assessmentidentifier\nWHERE sa.studentusi = 1\nLIMIT 50",
+      "retrieved_tables": [
+        "edfi.StudentAssessment",
+        "edfi.StudentAssessmentItem",
+        "edfi.StudentAssessmentStudentObjectiveAssessment",
+        "edfi.AssessmentItemResultDescriptor",
+        "edfi.StudentAssessmentScoreResult",
+        "edfi.StudentAssessmentStudentObjectiveAssessmentScoreResult",
+        "edfi.ResultDatatypeTypeDescriptor",
+        "edfi.EventCircumstanceDescriptor"
+      ],
+      "join_tree_nodes": [
+        "edfi.Assessment",
+        "edfi.AssessmentItem",
+        "edfi.AssessmentItemResultDescriptor",
+        "edfi.AssessmentReportingMethodDescriptor",
+        "edfi.Descriptor",
+        "edfi.EventCircumstanceDescriptor",
+        "edfi.ObjectiveAssessment",
+        "edfi.ResultDatatypeTypeDescriptor",
+        "edfi.Student",
+        "edfi.StudentAssessment",
+        "edfi.StudentAssessmentItem",
+        "edfi.StudentAssessmentScoreResult",
+        "edfi.StudentAssessmentStudentObjectiveAssessment",
+        "edfi.StudentAssessmentStudentObjectiveAssessmentScoreResult"
+      ],
+      "domains": [
+        "StudentAssessment"
+      ],
+      "timings_ms": {
+        "domain_route": 0.1454590237699449,
+        "entity_resolve": 0.03229198046028614,
+        "table_retrieve": 711.2143330159597,
+        "steiner": 1.5638750046491623,
+        "few_shots": 208.5696660215035,
+        "context+llm": 1908.2436250173487,
+        "validate+repair": 20.854375034105033,
+        "execute": 12.67204200848937,
+        "viz+desc": 1266.036625020206,
+        "total_ms": 4129.359957994893
+      },
+      "schema_linking_hit": false,
+      "join_path_hit": true,
+      "sql_valid": true,
+      "execution_match": false,
+      "leaked_descriptors": [],
+      "error": null,
+      "description": "The student has 1000 recorded assessment results, including scores such as 8, 3, and 10 for the '3rd Grade Reading 2nd Six Weeks 2021-2022 Spanish' assessment."
+    },
+    {
+      "nl_question": "Average daily attendance for each school in a school year",
+      "gold_id": "29a1774e-30e4-4055-933f-d7c694f62829",
+      "gold_tables": [
+        "edfi.StudentSchoolAttendanceEvent",
+        "edfi.School",
+        "edfi.EducationOrganization",
+        "edfi.AttendanceEventCategoryDescriptor"
+      ],
+      "generated_sql": "SELECT eo.nameofinstitution AS school, COUNT(*) FILTER (WHERE d.codevalue = 'In Attendance') AS days_present, COUNT(*) AS total_event_days FROM edfi.studentschoolattendanceevent ssae JOIN edfi.school s ON ssae.schoolid = s.schoolid JOIN edfi.educationorganization eo ON s.schoolid = eo.educationorganizationid JOIN edfi.descriptor d ON ssae.attendanceeventcategorydescriptorid = d.descriptorid GROUP BY eo.nameofinstitution ORDER BY days_present DESC",
+      "gold_sql": "SELECT eo.nameofinstitution,\n       COUNT(*) FILTER (WHERE d.codevalue = 'In Attendance') AS days_present,\n       COUNT(*) AS total_event_days\nFROM edfi.studentschoolattendanceevent ssae\nJOIN edfi.school s ON ssae.schoolid = s.schoolid\nJOIN edfi.educationorganization eo ON s.schoolid = eo.educationorganizationid\nJOIN edfi.descriptor d ON ssae.attendanceeventcategorydescriptorid = d.descriptorid\nGROUP BY eo.nameofinstitution\nORDER BY days_present DESC",
+      "retrieved_tables": [
+        "edfi.StudentSchoolAttendanceEvent",
+        "edfi.StudentProgramAttendanceEvent",
+        "edfi.StudentSectionAttendanceEvent",
+        "edfi.SchoolYearType",
+        "edfi.SessionAcademicWeek",
+        "edfi.StudentSchoolAssociation",
+        "edfi.School",
+        "edfi.SchoolCategoryDescriptor"
+      ],
+      "join_tree_nodes": [
+        "edfi.AcademicWeek",
+        "edfi.AttendanceEventCategoryDescriptor",
+        "edfi.CourseOffering",
+        "edfi.Descriptor",
+        "edfi.EducationOrganization",
+        "edfi.IndicatorLevelDescriptor",
+        "edfi.Program",
+        "edfi.ProgramTypeDescriptor",
+        "edfi.School",
+        "edfi.SchoolCategoryDescriptor",
+        "edfi.SchoolYearType",
+        "edfi.Section",
+        "edfi.Session",
+        "edfi.SessionAcademicWeek",
+        "edfi.Student",
+        "edfi.StudentProgramAttendanceEvent",
+        "edfi.StudentSchoolAssociation",
+        "edfi.StudentSchoolAttendanceEvent",
+        "edfi.StudentSectionAssociation",
+        "edfi.StudentSectionAttendanceEvent",
+        "edfi.StudentSpecialEducationProgramEligibilityAssociation"
+      ],
+      "domains": [
+        "StudentAttendance",
+        "SchoolCalendar"
+      ],
+      "timings_ms": {
+        "domain_route": 0.06654200842604041,
+        "entity_resolve": 0.09724998380988836,
+        "table_retrieve": 532.7538329875097,
+        "steiner": 1.5812920173630118,
+        "few_shots": 1226.2372500263155,
+        "context+llm": 1871.9539169687778,
+        "validate+repair": 33.697874983772635,
+        "execute": 15.458290989045054,
+        "viz+desc": 1215.4867919743992,
+        "total_ms": 4897.373542014975
+      },
+      "schema_linking_hit": false,
+      "join_path_hit": true,
+      "sql_valid": true,
+      "execution_match": false,
+      "leaked_descriptors": [],
+      "error": null,
+      "description": "The average daily attendance for Grand Bend Middle School is 0 out of 466 event days, for Grand Bend Elementary School is 0 out of 831 event days, and for Grand Bend High School is 0 out of 620 event days."
+    }
+  ]
+}

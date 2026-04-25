@@ -1,0 +1,163 @@
+# Provider routing for the text2sql platform.
+# Override per environment with configs/<env>.yaml or env vars (TEXT2SQL_*).
+#
+# Every provider name maps to an entry in the registry (see providers/factory.py).
+# Switch providers without code changes — secrets come from .env, never here.
+
+ed_fi:
+  data_standard_version: "6.1.0"
+  extensions: []                    # e.g. ["TPDM"] when 6.1.0-compatible artifacts exist
+  cache_dir: "data/edfi"
+  artifact_dir: "data/artifacts"
+  github:
+    ods_repo: "Ed-Fi-Alliance-OSS/Ed-Fi-ODS"
+    ods_ref: "main"
+    extensions_repo: "Ed-Fi-Alliance-OSS/Ed-Fi-Extensions"
+    extensions_ref: "main"
+    sql_dialect: "MsSql"            # ApiModel.json is identical regardless; FK SQL is per-dialect
+
+llm:
+  primary: azure-gpt-4o
+  fallback: anthropic-sonnet
+  task_routing:
+    sql_generation: azure-gpt-4o
+    repair_loop: azure-gpt-4o
+    visualization: azure-gpt-4o
+    description: azure-gpt-4o
+    cluster_naming: azure-gpt-4o   # cheap-tier swap later
+    classifier_fallback: azure-gpt-4o
+
+  providers:
+    azure-gpt-4o:
+      kind: azure_openai
+      deployment: ${AZURE_OPENAI_CHAT_DEPLOYMENT}
+      api_version: ${AZURE_OPENAI_API_VERSION}
+      endpoint: ${AZURE_OPENAI_ENDPOINT}
+      api_key_env: AZURE_OPENAI_API_KEY
+      max_tokens: 4096
+      temperature: 0
+    anthropic-sonnet:
+      kind: anthropic
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+      max_tokens: 4096
+      temperature: 0
+    openai-gpt-4o:
+      kind: openai
+      model: gpt-4o
+      api_key_env: OPENAI_API_KEY
+      max_tokens: 4096
+      temperature: 0
+    openrouter-glm-5.1:
+      kind: openrouter
+      model: z-ai/glm-5.1
+      api_key_env: OPENROUTER_API_KEY
+      max_tokens: 4096
+      temperature: 0
+      x_title: text2sql
+      # GLM-5.1 is a thinking-style model. Disabling reasoning makes it
+      # 2-5x faster and stops it from blowing max_tokens on internal CoT
+      # before producing SQL. Verified: 0 reasoning tokens with this knob.
+      reasoning: {enabled: false}
+    openrouter-glm-5.1-thinking:
+      kind: openrouter
+      model: z-ai/glm-5.1
+      api_key_env: OPENROUTER_API_KEY
+      max_tokens: 8192
+      temperature: 0
+      x_title: text2sql
+      # Same model, reasoning enabled. Slower but possibly more accurate
+      # on tough multi-domain queries.
+    openrouter-deepseek-v3.2:
+      kind: openrouter
+      model: deepseek/deepseek-v3.2
+      api_key_env: OPENROUTER_API_KEY
+      max_tokens: 4096
+      temperature: 0
+      x_title: text2sql
+    openrouter-claude-sonnet-4.6:
+      kind: openrouter
+      model: anthropic/claude-sonnet-4.6
+      api_key_env: OPENROUTER_API_KEY
+      max_tokens: 4096
+      temperature: 0
+      x_title: text2sql
+    openrouter-qwen3-coder-next:
+      kind: openrouter
+      model: qwen/qwen3-coder-next
+      api_key_env: OPENROUTER_API_KEY
+      max_tokens: 4096
+      temperature: 0
+      x_title: text2sql
+
+embeddings:
+  primary: azure-text-embedding-3-large
+
+  providers:
+    azure-text-embedding-3-large:
+      kind: azure_openai
+      deployment: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}
+      api_version: ${AZURE_OPENAI_API_VERSION}
+      endpoint: ${AZURE_OPENAI_ENDPOINT}
+      api_key_env: AZURE_OPENAI_API_KEY
+      dim: 3072
+      batch_size: 64
+    openai-text-embedding-3-large:
+      kind: openai
+      model: text-embedding-3-large
+      api_key_env: OPENAI_API_KEY
+      dim: 3072
+
+vector_store:
+  primary: faiss-local
+
+  providers:
+    faiss-local:
+      kind: faiss
+      path: data/artifacts/vector
+    qdrant-local:
+      kind: qdrant
+      url: http://127.0.0.1:6333
+
+target_db:
+  primary: ${TARGET_DB:-postgresql-local}
+
+  providers:
+    postgresql-local:
+      kind: postgresql
+      host: ${TARGET_DB_HOST:-127.0.0.1}
+      port: ${TARGET_DB_PORT:-5432}
+      database: ${TARGET_DB_NAME:-EdFi_Ods}
+      user: ${TARGET_DB_USER:-edfi}
+      password_env: TARGET_DB_PASSWORD
+      schema_search_path: ["edfi", "tpdm"]
+    mssql-azure:
+      kind: mssql
+      host: ${DB_SERVER}
+      database: ${DB_NAME}
+      user: ${DB_USER}
+      password_env: DB_PASSWORD
+      trust_server_certificate: true
+      driver: "ODBC Driver 18 for SQL Server"
+    mssql-northridge:
+      kind: mssql
+      host: ${MSSQL_HOST:-127.0.0.1}
+      port: ${MSSQL_PORT:-1433}
+      database: EdFi_Ods_Northridge
+      user: sa
+      password_env: MSSQL_SA_PASSWORD
+      trust_server_certificate: true
+      driver: "ODBC Driver 18 for SQL Server"
+      encrypt: false
+
+metadata_db:
+  kind: postgresql
+  host: ${METADATA_DB_HOST:-127.0.0.1}
+  port: ${METADATA_DB_PORT:-5432}
+  database: ${METADATA_DB_NAME:-text2sql_meta}
+  user: ${METADATA_DB_USER:-edfi}
+  password_env: METADATA_DB_PASSWORD
+
+logging:
+  level: ${LOG_LEVEL:-INFO}
+  format: json

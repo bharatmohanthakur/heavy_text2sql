@@ -1,0 +1,11 @@
+# Human override layer applied AFTER LLM classification.
+# Each entry locks (primary_domain, secondary_domain) for one table.
+# These are read on every rebuild; LLM classifications never overwrite them.
+
+overrides: []
+  # Example:
+  # - schema: edfi
+  #   table: AccountabilityRating
+  #   primary_domain: Assessment
+  #   secondary_domain: Accountability
+  #   reason: "Used in state report card queries"

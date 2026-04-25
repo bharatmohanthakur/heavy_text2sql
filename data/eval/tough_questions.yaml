@@ -1,0 +1,30 @@
+# 12 tough end-to-end stress questions.
+# Mix of: multi-domain joins, descriptors with namespace ambiguity, double
+# negation, time-bounded counts, set difference, group-by + having, and
+# colloquial phrasings.
+
+queries:
+  - id: cross_attendance_demographic
+    q: "How many Hispanic students were absent at least once this term?"
+  - id: discipline_special_ed
+    q: "Which schools had the most disciplinary incidents involving students with IEPs last school year?"
+  - id: gpa_per_grade
+    q: "Show average GPA broken down by grade level for the senior class"
+  - id: section_credentialed
+    q: "List sections currently taught by staff who hold a math teaching credential"
+  - id: not_graduated_passing
+    q: "Students who did NOT graduate but earned passing grades in every course"
+  - id: descriptor_ambiguity_levels
+    q: "Top 5 grade levels by enrollment for Title I schools"
+  - id: free_lunch_intervention
+    q: "Free-and-reduced-lunch students who received reading interventions, by school"
+  - id: candidate_field_hours
+    q: "Teacher-prep candidates who completed at least 100 hours of field experience in 2023"
+  - id: assessment_advanced
+    q: "Hispanic ELL students who scored Advanced on the state ELA assessment with 90%+ attendance"
+  - id: course_no_takers
+    q: "Courses offered this year that have zero enrolled students"
+  - id: staff_retention
+    q: "Staff who left between 2022 and 2023 — by school and reason"
+  - id: bell_schedule_overlap
+    q: "Sections that share the same bell-schedule period across two different teachers"

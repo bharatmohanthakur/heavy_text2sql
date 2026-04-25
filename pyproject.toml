@@ -1,0 +1,28 @@
+[project]
+name = "heavy-text2sql"
+version = "0.1.0"
+description = "Ed-Fi Text-to-SQL Platform — production-grade NL→SQL for Ed-Fi ODS"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = ["packages/backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/backend/tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = true

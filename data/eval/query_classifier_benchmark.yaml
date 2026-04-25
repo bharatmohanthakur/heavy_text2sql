@@ -1,0 +1,151 @@
+# Query domain-classifier benchmark — 30 diverse queries.
+#
+# Each query has:
+#   q                : the natural-language question
+#   expected_top1    : (optional) the single most-correct domain — primary should match
+#   expected_in_top3 : (optional) domain names that MUST appear in primary/secondary/tertiary
+#   forbidden        : (optional) domains the classifier MUST NOT pick
+#   tag              : difficulty bucket (easy / cross_cutting / ambiguous /
+#                       descriptor / aggregation / tpdm / adversarial)
+#
+# All domain names must come from the DS 6.1.0 catalog
+# (see classification/catalog.py).
+
+queries:
+  # ── Easy single-domain (5) ──────────────────────────────────────────────────
+  - q: "How many students enrolled in Grade 9 last year?"
+    expected_top1: Enrollment
+    expected_in_top3: [Enrollment]
+    tag: easy
+
+  - q: "List every school's daily attendance rate this term."
+    expected_top1: StudentAttendance
+    expected_in_top3: [StudentAttendance]
+    tag: easy
+
+  - q: "Show me the chart of accounts for the district's general fund."
+    expected_top1: Finance
+    expected_in_top3: [Finance]
+    tag: easy
+
+  - q: "Which staff hold a math teaching credential?"
+    expected_in_top3: [Credential, Staff]
+    tag: easy
+
+  - q: "What courses are in the high school catalog?"
+    expected_in_top3: [CourseCatalog]
+    tag: easy
+
+  # ── Cross-cutting multi-domain (6) ──────────────────────────────────────────
+  - q: "How many Hispanic students were absent from Algebra I last semester?"
+    expected_in_top3: [StudentAttendance, StudentIdentificationAndDemographics]
+    tag: cross_cutting
+
+  - q: "Find graduating seniors who failed any state assessment."
+    expected_in_top3: [Graduation, StudentAssessment]
+    tag: cross_cutting
+
+  - q: "Report disciplinary incidents involving students with IEPs."
+    expected_in_top3: [Discipline, SpecialEducation]
+    tag: cross_cutting
+
+  - q: "Which students on free-and-reduced lunch were intervened with for reading?"
+    expected_in_top3: [Intervention, AlternativeAndSupplementalServices]
+    tag: cross_cutting
+
+  - q: "Show female teachers' performance evaluation ratings by school."
+    expected_in_top3: [PerformanceEvaluation, Staff]
+    tag: cross_cutting
+
+  - q: "Which Hispanic ELL students with 90%+ attendance scored advanced on the state ELA assessment?"
+    expected_in_top3: [StudentAssessment, StudentAttendance, StudentIdentificationAndDemographics]
+    tag: cross_cutting
+
+  # ── Ambiguous / colloquial (5) ──────────────────────────────────────────────
+  - q: "Top 10 schools by enrollment"
+    expected_in_top3: [Enrollment, EducationOrganization]
+    tag: ambiguous
+
+  - q: "What is each kid's GPA?"
+    expected_in_top3: [StudentAcademicRecord]
+    tag: ambiguous
+
+  - q: "Show me grades for last quarter"
+    expected_in_top3: [ReportCard, Gradebook, StudentAcademicRecord]
+    tag: ambiguous
+
+  - q: "How is class 3B doing?"
+    expected_in_top3: [SectionsAndPrograms, TeachingAndLearning, Gradebook]
+    tag: ambiguous
+
+  - q: "Give me a roster"
+    forbidden: []
+    tag: ambiguous
+
+  # ── Descriptor / lookup-flavored (3) ────────────────────────────────────────
+  - q: "List all valid race descriptors used in the district"
+    expected_in_top3: [StudentIdentificationAndDemographics]
+    tag: descriptor
+
+  - q: "Which discipline action types are most common?"
+    expected_top1: Discipline
+    expected_in_top3: [Discipline]
+    tag: descriptor
+
+  - q: "Enumerate every academic subject we report on."
+    expected_in_top3: [CourseCatalog, StudentAcademicRecord]
+    tag: descriptor
+
+  # ── Time / aggregation (3) ──────────────────────────────────────────────────
+  - q: "Compare Q1 vs Q2 enrollment by grade level"
+    expected_in_top3: [Enrollment]
+    tag: aggregation
+
+  - q: "Year-over-year graduation rate trend"
+    expected_in_top3: [Graduation]
+    tag: aggregation
+
+  - q: "Average daily attendance for week of 2024-09-09"
+    expected_top1: StudentAttendance
+    expected_in_top3: [StudentAttendance]
+    tag: aggregation
+
+  # ── Negation / boolean (2) ──────────────────────────────────────────────────
+  - q: "Students who did NOT graduate but had passing grades all four years"
+    expected_in_top3: [Graduation, StudentAcademicRecord]
+    tag: cross_cutting
+
+  - q: "Which staff have neither a credential nor a current evaluation?"
+    expected_in_top3: [Staff, Credential]
+    tag: cross_cutting
+
+  # ── TPDM / teacher-prep (2) ─────────────────────────────────────────────────
+  - q: "Which candidates completed a teacher preparation program in 2023?"
+    expected_in_top3: [EducatorPreparationProgram]
+    tag: tpdm
+
+  - q: "Show the field-experience hours for each candidate."
+    expected_in_top3: [EducatorPreparationProgram]
+    tag: tpdm
+
+  # ── Adversarial / out-of-scope (3) ──────────────────────────────────────────
+  - q: "How many football trophies does the school have?"
+    forbidden: []
+    tag: adversarial
+
+  - q: "Show the cafeteria menu for next week"
+    forbidden: []
+    tag: adversarial
+
+  - q: "What's the weather like at each school today?"
+    forbidden: []
+    tag: adversarial
+
+  # ── Survey + special education (2) ──────────────────────────────────────────
+  - q: "Average satisfaction score from the parent engagement survey"
+    expected_in_top3: [Survey]
+    tag: easy
+
+  - q: "List students with active IEP services delivered this month"
+    expected_in_top3: [SpecialEducation]
+    tag: easy

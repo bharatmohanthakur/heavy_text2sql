@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: #0b0d12;
+  color: #e8eaef;
+  font-family: ui-sans-serif, system-ui, -apple-system, Inter, sans-serif;
+}
+
+a { color: #5dd2c2; }
+
+table.results th, table.results td {
+  border-bottom: 1px solid #1c2129;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
+}
+table.results th { color: #8a91a0; font-weight: 500; }
+table.results tr:hover td { background: #11151c; }
+
+pre.sql {
+  background: #11151c;
+  border: 1px solid #1c2129;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1c2129;
+  color: #c8cdd6;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}

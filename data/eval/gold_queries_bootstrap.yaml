@@ -1,0 +1,234 @@
+# Bootstrap gold-SQL pairs for the Northridge MSSQL DB (DS ~6.0, ODS 7.1).
+# T-SQL flavor: SELECT TOP n, [bracket] identifiers, CamelCase tables/columns.
+# Each pair is exec-validated at seed time; any that fails is dropped.
+
+queries:
+  - nl: "How many students are enrolled in each school?"
+    sql: |
+      SELECT eo.[NameOfInstitution] AS [School],
+             COUNT(DISTINCT ssa.[StudentUSI]) AS [StudentCount]
+      FROM [edfi].[StudentSchoolAssociation] ssa
+      JOIN [edfi].[School] s ON ssa.[SchoolId] = s.[SchoolId]
+      JOIN [edfi].[EducationOrganization] eo
+        ON s.[SchoolId] = eo.[EducationOrganizationId]
+      GROUP BY eo.[NameOfInstitution]
+      ORDER BY [StudentCount] DESC
+    tables:
+      - edfi.StudentSchoolAssociation
+      - edfi.School
+      - edfi.EducationOrganization
+
+  - nl: "List all schools and their grade levels offered"
+    sql: |
+      SELECT eo.[NameOfInstitution], d.[CodeValue] AS [GradeLevel]
+      FROM [edfi].[School] s
+      JOIN [edfi].[EducationOrganization] eo
+        ON s.[SchoolId] = eo.[EducationOrganizationId]
+      JOIN [edfi].[SchoolGradeLevel] sgl ON s.[SchoolId] = sgl.[SchoolId]
+      JOIN [edfi].[Descriptor] d
+        ON sgl.[GradeLevelDescriptorId] = d.[DescriptorId]
+      ORDER BY eo.[NameOfInstitution], d.[CodeValue]
+    tables:
+      - edfi.School
+      - edfi.EducationOrganization
+      - edfi.SchoolGradeLevel
+      - edfi.GradeLevelDescriptor
+      - edfi.Descriptor
+
+  - nl: "Count of staff by sex"
+    sql: |
+      SELECT d.[CodeValue] AS [Sex], COUNT(*) AS [N]
+      FROM [edfi].[Staff] st
+      JOIN [edfi].[Descriptor] d
+        ON st.[SexDescriptorId] = d.[DescriptorId]
+      GROUP BY d.[CodeValue]
+      ORDER BY [N] DESC
+    tables:
+      - edfi.Staff
+      - edfi.Descriptor
+
+  - nl: "Number of students per grade level"
+    sql: |
+      SELECT d.[CodeValue] AS [GradeLevel],
+             COUNT(DISTINCT ssa.[StudentUSI]) AS [N]
+      FROM [edfi].[StudentSchoolAssociation] ssa
+      JOIN [edfi].[Descriptor] d
+        ON ssa.[EntryGradeLevelDescriptorId] = d.[DescriptorId]
+      GROUP BY d.[CodeValue]
+      ORDER BY d.[CodeValue]
+    tables:
+      - edfi.StudentSchoolAssociation
+      - edfi.Descriptor
+
+  - nl: "Total enrollment count"
+    sql: |
+      SELECT COUNT(*) AS [TotalEnrollments]
+      FROM [edfi].[StudentSchoolAssociation]
+    tables:
+      - edfi.StudentSchoolAssociation
+
+  - nl: "Counts of disciplinary incidents by school"
+    sql: |
+      SELECT eo.[NameOfInstitution], COUNT(*) AS [Incidents]
+      FROM [edfi].[DisciplineIncident] di
+      JOIN [edfi].[School] s ON di.[SchoolId] = s.[SchoolId]
+      JOIN [edfi].[EducationOrganization] eo
+        ON s.[SchoolId] = eo.[EducationOrganizationId]
+      GROUP BY eo.[NameOfInstitution]
+      ORDER BY [Incidents] DESC
+    tables:
+      - edfi.DisciplineIncident
+      - edfi.School
+      - edfi.EducationOrganization
+
+  - nl: "Hispanic students in the district"
+    sql: |
+      SELECT DISTINCT TOP 50 s.[StudentUSI], s.[FirstName], s.[LastSurname]
+      FROM [edfi].[Student] s
+      JOIN [edfi].[StudentEducationOrganizationAssociation] seoa
+        ON s.[StudentUSI] = seoa.[StudentUSI]
+      JOIN [edfi].[Descriptor] d
+        ON seoa.[OldEthnicityDescriptorId] = d.[DescriptorId]
+      WHERE d.[CodeValue] = 'Hispanic'
+      ORDER BY s.[LastSurname]
+    tables:
+      - edfi.Student
+      - edfi.StudentEducationOrganizationAssociation
+      - edfi.OldEthnicityDescriptor
+      - edfi.Descriptor
+
+  - nl: "Students who did NOT graduate but earned passing grades in every course"
+    sql: |
+      SELECT TOP 50 s.[StudentUSI], s.[FirstName], s.[LastSurname]
+      FROM [edfi].[Student] s
+      JOIN [edfi].[StudentAcademicRecord] sar
+        ON sar.[StudentUSI] = s.[StudentUSI]
+      LEFT JOIN [edfi].[GraduationPlan] gp
+        ON gp.[EducationOrganizationId] = sar.[EducationOrganizationId]
+       AND gp.[GraduationSchoolYear] = sar.[SchoolYear]
+      WHERE gp.[Id] IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM [edfi].[CourseTranscript] ct
+          WHERE ct.[StudentUSI] = s.[StudentUSI]
+            AND ct.[FinalLetterGradeEarned] IN ('F', 'I')
+        )
+    tables:
+      - edfi.Student
+      - edfi.StudentAcademicRecord
+      - edfi.GraduationPlan
+      - edfi.CourseTranscript
+
+  - nl: "Courses offered this year that have zero enrolled students"
+    sql: |
+      SELECT TOP 50 co.[LocalCourseCode], co.[CourseTitle], co.[SchoolId]
+      FROM [edfi].[CourseOffering] co
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM [edfi].[Section] sec
+        JOIN [edfi].[StudentSectionAssociation] ssa
+          ON ssa.[SchoolId] = sec.[SchoolId]
+         AND ssa.[LocalCourseCode] = sec.[LocalCourseCode]
+         AND ssa.[SchoolYear] = sec.[SchoolYear]
+         AND ssa.[SectionIdentifier] = sec.[SectionIdentifier]
+         AND ssa.[SessionName] = sec.[SessionName]
+        WHERE sec.[SchoolId] = co.[SchoolId]
+          AND sec.[LocalCourseCode] = co.[LocalCourseCode]
+          AND sec.[SchoolYear] = co.[SchoolYear]
+          AND sec.[SessionName] = co.[SessionName]
+      )
+    tables:
+      - edfi.CourseOffering
+      - edfi.Section
+      - edfi.StudentSectionAssociation
+
+  - nl: "Sections that share the same bell-schedule period across two different teachers"
+    sql: |
+      SELECT TOP 50
+        s1.[LocalCourseCode], s1.[SectionIdentifier], s1.[SessionName], s1.[SchoolId],
+        s2.[LocalCourseCode] AS [OtherLocalCourseCode],
+        s2.[SectionIdentifier] AS [OtherSectionIdentifier]
+      FROM [edfi].[SectionClassPeriod] scp1
+      JOIN [edfi].[Section] s1
+        ON scp1.[SchoolId] = s1.[SchoolId]
+       AND scp1.[LocalCourseCode] = s1.[LocalCourseCode]
+       AND scp1.[SchoolYear] = s1.[SchoolYear]
+       AND scp1.[SectionIdentifier] = s1.[SectionIdentifier]
+       AND scp1.[SessionName] = s1.[SessionName]
+      JOIN [edfi].[SectionClassPeriod] scp2
+        ON scp1.[ClassPeriodName] = scp2.[ClassPeriodName]
+       AND scp1.[SchoolId] = scp2.[SchoolId]
+       AND scp1.[LocalCourseCode] <> scp2.[LocalCourseCode]
+      JOIN [edfi].[Section] s2
+        ON scp2.[SchoolId] = s2.[SchoolId]
+       AND scp2.[LocalCourseCode] = s2.[LocalCourseCode]
+       AND scp2.[SchoolYear] = s2.[SchoolYear]
+       AND scp2.[SectionIdentifier] = s2.[SectionIdentifier]
+       AND scp2.[SessionName] = s2.[SessionName]
+    tables:
+      - edfi.Section
+      - edfi.SectionClassPeriod
+
+  - nl: "Average daily attendance percentage by school"
+    sql: |
+      SELECT eo.[NameOfInstitution],
+             SUM(CASE WHEN d.[CodeValue] = 'In Attendance' THEN 1 ELSE 0 END) AS [DaysPresent],
+             COUNT(*) AS [TotalEvents]
+      FROM [edfi].[StudentSectionAttendanceEvent] ssae
+      JOIN [edfi].[Section] sec
+        ON ssae.[SchoolId] = sec.[SchoolId]
+       AND ssae.[LocalCourseCode] = sec.[LocalCourseCode]
+       AND ssae.[SchoolYear] = sec.[SchoolYear]
+       AND ssae.[SectionIdentifier] = sec.[SectionIdentifier]
+       AND ssae.[SessionName] = sec.[SessionName]
+      JOIN [edfi].[School] s ON sec.[SchoolId] = s.[SchoolId]
+      JOIN [edfi].[EducationOrganization] eo
+        ON s.[SchoolId] = eo.[EducationOrganizationId]
+      JOIN [edfi].[Descriptor] d
+        ON ssae.[AttendanceEventCategoryDescriptorId] = d.[DescriptorId]
+      GROUP BY eo.[NameOfInstitution]
+      ORDER BY [DaysPresent] DESC
+    tables:
+      - edfi.StudentSectionAttendanceEvent
+      - edfi.Section
+      - edfi.School
+      - edfi.EducationOrganization
+      - edfi.AttendanceEventCategoryDescriptor
+      - edfi.Descriptor
+
+  - nl: "Total credits earned per student"
+    sql: |
+      SELECT TOP 50 s.[StudentUSI], s.[FirstName], s.[LastSurname],
+             SUM(ct.[EarnedCredits]) AS [TotalCredits]
+      FROM [edfi].[Student] s
+      JOIN [edfi].[CourseTranscript] ct ON s.[StudentUSI] = ct.[StudentUSI]
+      GROUP BY s.[StudentUSI], s.[FirstName], s.[LastSurname]
+      ORDER BY [TotalCredits] DESC
+    tables:
+      - edfi.Student
+      - edfi.CourseTranscript
+
+  - nl: "Top 10 students by GPA"
+    sql: |
+      SELECT TOP 10 s.[StudentUSI], s.[FirstName], s.[LastSurname],
+             gpa.[GradePointAverageValue]
+      FROM [edfi].[Student] s
+      JOIN [edfi].[StudentAcademicRecordGradePointAverage] gpa
+        ON gpa.[StudentUSI] = s.[StudentUSI]
+      ORDER BY gpa.[GradePointAverageValue] DESC
+    tables:
+      - edfi.Student
+      - edfi.StudentAcademicRecordGradePointAverage
+
+  - nl: "Discipline incidents per student"
+    sql: |
+      SELECT TOP 50 s.[StudentUSI], s.[FirstName], s.[LastSurname],
+             COUNT(*) AS [IncidentCount]
+      FROM [edfi].[Student] s
+      JOIN [edfi].[StudentDisciplineIncidentBehaviorAssociation] sdib
+        ON s.[StudentUSI] = sdib.[StudentUSI]
+      GROUP BY s.[StudentUSI], s.[FirstName], s.[LastSurname]
+      ORDER BY [IncidentCount] DESC
+    tables:
+      - edfi.Student
+      - edfi.StudentDisciplineIncidentBehaviorAssociation
