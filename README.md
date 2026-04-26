@@ -296,6 +296,132 @@ cd packages/frontend && npm run dev     # Next.js on :3000
 
 ---
 
+## Bring your own database
+
+The repo defaults to the Northridge sample, but you can point it at any
+Ed-Fi-shaped ODS — Postgres, MSSQL Server, or Azure SQL — without changing
+any code. The platform is schema-aware (built off Ed-Fi DS 6.1.0 metadata)
+so your DB must follow Ed-Fi conventions: an `edfi.*` schema, the standard
+`edfi.Descriptor` lookup table, FK constraints in place, and primary keys
+on `Student`, `School`, `EducationOrganization`, etc.
+
+### 1. Add a provider entry to `configs/default.yaml`
+
+Pick the dialect that matches your DB and append it under `target_db.providers`:
+
+```yaml
+target_db:
+  primary: ${TARGET_DB:-my-ods}        # ← your new entry's name
+
+  providers:
+    # Postgres
+    my-ods:
+      kind: postgresql
+      host: ${MY_DB_HOST:-127.0.0.1}
+      port: ${MY_DB_PORT:-5432}
+      database: ${MY_DB_NAME:-EdFi_Ods}
+      user: ${MY_DB_USER:-edfi}
+      password_env: MY_DB_PASSWORD     # name of the env var (NOT the value)
+      schema_search_path: ["edfi", "tpdm"]
+
+    # OR — MSSQL Server / Azure SQL
+    my-ods-mssql:
+      kind: mssql
+      host: ${MY_DB_HOST}
+      port: ${MY_DB_PORT:-1433}
+      database: ${MY_DB_NAME}
+      user: ${MY_DB_USER}
+      password_env: MY_DB_PASSWORD
+      trust_server_certificate: true
+      encrypt: false                   # set true for production / Azure SQL
+      driver: "ODBC Driver 18 for SQL Server"   # mssql only
+```
+
+The two existing kinds — `postgresql` and `mssql` — are already implemented
+in `packages/backend/src/text2sql/providers/db/`. You don't write code, you
+just add the YAML entry.
+
+### 2. Put credentials in `.env`
+
+```bash
+# .env
+MY_DB_HOST=db.internal.company
+MY_DB_NAME=EdFi_Ods_Production
+MY_DB_USER=text2sql_readonly
+MY_DB_PASSWORD=••••••••••••
+TARGET_DB=my-ods                       # tells the loader which provider to use
+```
+
+The user only needs `SELECT` rights on `edfi.*` (and `tpdm.*` if you have
+TPDM extensions). `EXPLAIN` and read-only metadata catalogs are required by
+the validator.
+
+### 3. Verify connectivity
+
+```bash
+TARGET_DB=my-ods uv run text2sql show-config        # see resolved config
+TARGET_DB=my-ods uv run text2sql ask "SELECT 1"     # smoke-test
+```
+
+If `Login failed` or `connection refused`, fix that before going further.
+
+### 4. Build artifacts against your DB
+
+The catalog and embedding step pull **sample rows from your DB**, which is
+where descriptions and `[examples: …]` come from. So these need to run
+against your real DB:
+
+```bash
+TARGET_DB=my-ods uv run text2sql ingest                  # one-time, schema-only
+TARGET_DB=my-ods uv run text2sql map-tables-cmd          # classify by Ed-Fi domains
+TARGET_DB=my-ods uv run text2sql build-fk-graph          # FK graph
+TARGET_DB=my-ods uv run text2sql build-table-catalog-cmd # samples + LLM descriptions
+TARGET_DB=my-ods uv run text2sql index-catalog           # embed + FAISS index
+```
+
+### 5. (Optional) Seed gold few-shots from your team's known-good queries
+
+Drop NL/SQL pairs into a YAML file in your DB's dialect, then:
+
+```bash
+TARGET_DB=my-ods uv run text2sql gold-seed --yaml-path data/eval/my_gold.yaml
+```
+
+Each pair is exec-validated against your live DB before being stored — bad
+ones are reported and skipped.
+
+### 6. Serve
+
+```bash
+TARGET_DB=my-ods uv run text2sql serve --port 8011
+cd packages/frontend && npm run dev
+```
+
+### Notes when adopting your own DB
+
+- **Dialect detection is automatic.** The validator, repair loop, and prompt
+  rules all read `sql_engine.dialect` ("postgresql" / "mssql"). Identifier
+  quoting (`"name"` vs `[name]`) and row caps (`LIMIT 50` vs `TOP 50`) are
+  picked accordingly.
+- **Gold few-shots are dialect-locked.** A gold pair written in Postgres
+  syntax will steer the LLM to write Postgres syntax. Re-seed when switching
+  dialects (the bootstrap YAML is MSSQL T-SQL).
+- **Live-DB filter.** At startup the platform filters the catalog down to
+  the tables/columns that actually exist in your live DB. Anything in the
+  Ed-Fi metadata schema but missing from your install is hidden from the
+  LLM, eliminating "Invalid object name" hallucinations.
+- **TPDM / extensions.** If your ODS has TPDM (or a custom extension)
+  schemas, add them to `configs/default.yaml` under `ed_fi.extensions` and
+  to `target_db.providers.<name>.schema_search_path`. The ingest stage
+  fetches matching extension artifacts from the Ed-Fi GitHub repo
+  automatically.
+- **Non-Ed-Fi databases.** Out of scope today. The classifier, graph
+  builder, and descriptor logic are all Ed-Fi-specific. You'd need to swap
+  Components 1-2 (ingestion + classification) and re-author the gold store
+  for a non-Ed-Fi schema.
+
+---
+
 ## Apple Silicon — running MSSQL Server natively
 
 Default Colima uses QEMU which crashes SQL Server 2022 with an mmap error.
