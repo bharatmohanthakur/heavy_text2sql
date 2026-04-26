@@ -48,10 +48,14 @@ class SentenceTransformersEmbedding(EmbeddingProvider):
             cache_folder=cache_dir,
             trust_remote_code=trust_remote_code,
         )
-        # Some models (e.g. BGE-M3) expose dim via a get_sentence_embedding_dimension();
-        # others embed dim into config. Fall back to YAML override.
+        # Different sentence-transformers versions expose dim under different
+        # method names. Try each in turn, fall back to YAML override.
+        dim_method = (
+            getattr(self._model, "get_embedding_dimension", None)
+            or getattr(self._model, "get_sentence_embedding_dimension", None)
+        )
         try:
-            self._dim = int(self._model.get_sentence_embedding_dimension())
+            self._dim = int(dim_method()) if dim_method else int(cfg.get("dim", 768))
         except Exception:
             self._dim = int(cfg.get("dim", 768))
         # Override dim if explicitly set (some BGE-M3 variants use 1024).
