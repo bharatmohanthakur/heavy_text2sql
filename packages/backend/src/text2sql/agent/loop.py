@@ -226,44 +226,42 @@ class _AssembledMessage:
 
 
 class _LLMClient:
-    """Tool-calling streaming chat client (Azure OpenAI / OpenAI direct).
+    """Capability-dispatching streaming chat client.
 
-    `stream_chat()` is a generator that yields per-token delta events as they
-    arrive from the model, then the final assembled message. Each delta is
-    plumbed straight through to the SSE stream so the browser sees the
-    assistant turn build up in real time, including each tool's JSON arguments.
+    The agent loop assumes one wire shape internally — OpenAI-style
+    tool_calls. To support Anthropic-style tool_use providers, we keep
+    the loop's internal event shape unchanged and translate at the
+    boundary: outgoing OpenAI tools/messages → vendor-native; incoming
+    vendor-native deltas → OpenAI-shape `text_delta` / `tool_call_delta`.
+
+    Backends:
+      - kind in {azure_openai, openai}   → `_OpenAIToolBackend` (passthrough)
+      - kind in {anthropic}              → `_AnthropicToolBackend` (translator)
+
+    Bedrock-Anthropic via Converse uses the same tool_use semantics as
+    direct Anthropic; a `_BedrockAnthropicToolBackend` adapter is a
+    natural follow-on (capability flag `anthropic_tool_use=True` already
+    declared on the bedrock provider).
     """
 
     def __init__(self, spec: ProviderEntry, *, max_tokens: int = 1500) -> None:
         cfg = spec.model_dump()
-        self._kind = cfg["kind"]
+        kind = cfg["kind"]
         self._max_tokens = max_tokens
-        if self._kind == "azure_openai":
-            self._client = AzureOpenAI(
-                azure_endpoint=cfg["endpoint"],
-                api_key=os.environ[cfg["api_key_env"]],
-                api_version=cfg["api_version"],
-            )
-            self._model = cfg["deployment"]
-        elif self._kind == "openai":
-            self._client = OpenAI(api_key=os.environ[cfg["api_key_env"]])
-            self._model = cfg["model"]
+        if kind in ("azure_openai", "openai"):
+            self._backend: _ToolBackend = _OpenAIToolBackend(cfg, max_tokens=max_tokens)
+        elif kind == "anthropic":
+            self._backend = _AnthropicToolBackend(cfg, max_tokens=max_tokens)
         else:
-            # Capability-grounded fail-fast. The agent loop drives the LLM
-            # via OpenAI-shape tool-calling; providers without that
-            # capability cannot be the /chat backend until the Step H
-            # translator lands. Tell the user exactly which YAML key to
-            # edit instead of crashing mid-request.
             raise ValueError(
-                f"The /chat agent loop requires an LLM with "
-                f"openai_tool_calling capability. The provider configured "
-                f"for `llm.task_routing.sql_generation` is kind={self._kind!r}, "
-                f"which does not (yet) support OpenAI-shape tool calls.\n\n"
+                f"The /chat agent loop requires an LLM with either "
+                f"openai_tool_calling or anthropic_tool_use capability. "
+                f"The provider configured for `llm.task_routing.sql_generation` "
+                f"is kind={kind!r}, which has neither.\n\n"
                 f"Either:\n"
                 f"  1. Edit configs/default.yaml — set "
-                f"llm.task_routing.sql_generation to a provider with kind "
-                f"'azure_openai' or 'openai' (currently the only kinds that "
-                f"support OpenAI-shape tool calls).\n"
+                f"llm.task_routing.sql_generation to a provider with one of "
+                f"the supported kinds: 'azure_openai', 'openai', 'anthropic'.\n"
                 f"  2. Use /query (the canonical pipeline) — it works with "
                 f"all 5 LLM providers."
             )
@@ -276,11 +274,63 @@ class _LLMClient:
         tool_choice: str | dict[str, Any] = "auto",
         temperature: float = 0.0,
     ) -> Iterator[dict[str, Any]]:
-        """Yields events:
+        """Yield internal events (unified across backends):
           {"type": "text_delta", "delta": "..."}
           {"type": "tool_call_delta", "index": N, "name": "...", "arguments_delta": "..."}
           {"type": "complete", "content": "...", "tool_calls": [...]}
         """
+        yield from self._backend.stream_chat(
+            messages, tools, tool_choice=tool_choice, temperature=temperature,
+        )
+
+
+# ── Backend protocol ─────────────────────────────────────────────────────────
+
+
+class _ToolBackend:
+    """Protocol — each backend is a streaming chat client whose tool-call
+    wire shape gets translated to/from the loop's internal OpenAI-style
+    event shape."""
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float = 0.0,
+    ) -> Iterator[dict[str, Any]]:
+        raise NotImplementedError
+
+
+# ── OpenAI / Azure OpenAI backend (passthrough) ──────────────────────────────
+
+
+class _OpenAIToolBackend(_ToolBackend):
+    """Native OpenAI-shape tool calling. Internal event shape == wire shape,
+    so this is a thin streaming pass-through."""
+
+    def __init__(self, cfg: dict[str, Any], *, max_tokens: int) -> None:
+        self._max_tokens = max_tokens
+        if cfg["kind"] == "azure_openai":
+            self._client = AzureOpenAI(
+                azure_endpoint=cfg["endpoint"],
+                api_key=os.environ[cfg["api_key_env"]],
+                api_version=cfg["api_version"],
+            )
+            self._model = cfg["deployment"]
+        else:
+            self._client = OpenAI(api_key=os.environ[cfg["api_key_env"]])
+            self._model = cfg["model"]
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float = 0.0,
+    ) -> Iterator[dict[str, Any]]:
         stream = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
@@ -302,6 +352,226 @@ class _LLMClient:
             "type": "complete",
             "content": acc.content,
             "tool_calls": acc.tool_calls,
+        }
+
+
+# ── Anthropic backend (translator) ───────────────────────────────────────────
+
+
+class _AnthropicToolBackend(_ToolBackend):
+    """Translates the loop's OpenAI-shape interface to Anthropic's Messages
+    API:
+
+      - Outgoing tools=[{type:"function", function:{name, parameters}}]
+        → tools=[{name, description, input_schema}]
+      - Outgoing message history with system / tool / assistant-with-tool_calls
+        roles → Anthropic's `system=` field + alternating user/assistant turns
+        with `tool_use` and `tool_result` content blocks
+      - Incoming SSE events (message_start, content_block_start/delta/stop,
+        message_stop) → loop's `text_delta` / `tool_call_delta` / `complete`
+
+    Tool-use input streams as JSON-fragment deltas (`input_json_delta`); we
+    forward each fragment as the loop's `tool_call_delta.arguments_delta`
+    so the browser sees JSON arguments build up token-by-token, exactly
+    like OpenAI.
+    """
+
+    def __init__(self, cfg: dict[str, Any], *, max_tokens: int) -> None:
+        # Lazy import so the dependency is not required for OpenAI users.
+        from anthropic import Anthropic
+        self._client = Anthropic(api_key=os.environ[cfg["api_key_env"]])
+        self._model = cfg["model"]
+        self._max_tokens = max_tokens
+
+    # ── Outgoing translation ────────────────────────────────────────────────
+
+    @staticmethod
+    def _openai_tools_to_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for t in tools:
+            fn = t.get("function") or {}
+            out.append({
+                "name": fn.get("name") or t.get("name") or "tool",
+                "description": fn.get("description") or t.get("description") or "",
+                "input_schema": fn.get("parameters") or t.get("parameters") or {
+                    "type": "object", "properties": {}
+                },
+            })
+        return out
+
+    @staticmethod
+    def _openai_messages_to_anthropic(
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Returns (system_prompt, anthropic_messages).
+
+        Conversion rules:
+          - role=system → concatenated into the system prompt.
+          - role=user → user message with single text block.
+          - role=assistant with `tool_calls` → assistant message with
+            `tool_use` content blocks (one per tool call).
+          - role=assistant without tool_calls → assistant message with text.
+          - role=tool → user message with `tool_result` content block keyed
+            on the originating tool_call_id (Anthropic conflates tool
+            results into the user turn).
+        """
+        system_chunks: list[str] = []
+        out: list[dict[str, Any]] = []
+
+        for m in messages:
+            role = m.get("role")
+            if role == "system":
+                system_chunks.append(m.get("content") or "")
+                continue
+            if role == "user":
+                out.append({"role": "user", "content": [{"type": "text", "text": m.get("content") or ""}]})
+                continue
+            if role == "assistant":
+                blocks: list[dict[str, Any]] = []
+                text = m.get("content") or ""
+                if text:
+                    blocks.append({"type": "text", "text": text})
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    raw_args = fn.get("arguments") or "{}"
+                    try:
+                        parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    except Exception:
+                        parsed = {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id") or "",
+                        "name": fn.get("name") or "",
+                        "input": parsed,
+                    })
+                out.append({"role": "assistant", "content": blocks})
+                continue
+            if role == "tool":
+                out.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": m.get("tool_call_id") or "",
+                        "content": m.get("content") or "",
+                    }],
+                })
+                continue
+        return "\n\n".join(system_chunks), out
+
+    # ── Incoming streaming ──────────────────────────────────────────────────
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float = 0.0,
+    ) -> Iterator[dict[str, Any]]:
+        anthropic_system, anthropic_messages = self._openai_messages_to_anthropic(messages)
+        anthropic_tools = self._openai_tools_to_anthropic(tools)
+
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "system": anthropic_system,
+            "messages": anthropic_messages,
+            "tools": anthropic_tools,
+            "max_tokens": self._max_tokens,
+            "temperature": temperature,
+        }
+        # Translate tool_choice — Anthropic uses {"type": "auto"|"any"|"tool", "name": ?}
+        if isinstance(tool_choice, str):
+            if tool_choice == "auto":
+                kwargs["tool_choice"] = {"type": "auto"}
+            elif tool_choice == "required" or tool_choice == "any":
+                kwargs["tool_choice"] = {"type": "any"}
+            elif tool_choice == "none":
+                # Anthropic Messages API doesn't have a "none" tool_choice;
+                # the workaround is to omit `tools` entirely, but the loop
+                # always passes them. Default to auto.
+                kwargs["tool_choice"] = {"type": "auto"}
+        elif isinstance(tool_choice, dict):
+            # Pass through {"type": "tool", "name": "..."} shape unchanged
+            kwargs["tool_choice"] = tool_choice
+
+        # Anthropic streaming: track which tool_use index each delta belongs
+        # to so we can map content_block_index → our own zero-based tool index.
+        text_acc = ""
+        # tool_use index assigned in order of arrival
+        tool_calls: list[dict[str, Any]] = []
+        block_to_tool_idx: dict[int, int] = {}
+
+        with self._client.messages.stream(**kwargs) as stream:
+            for ev in stream:
+                ev_type = getattr(ev, "type", None)
+                if ev_type == "content_block_start":
+                    blk = getattr(ev, "content_block", None)
+                    blk_idx = getattr(ev, "index", 0)
+                    if blk is not None and getattr(blk, "type", None) == "tool_use":
+                        my_idx = len(tool_calls)
+                        tool_calls.append({
+                            "id": getattr(blk, "id", "") or f"call_{my_idx}",
+                            "name": getattr(blk, "name", "") or "",
+                            "arguments": "",
+                        })
+                        block_to_tool_idx[blk_idx] = my_idx
+                        # Emit a tool_call_delta with empty args so the UI
+                        # can render the tool name immediately (matches the
+                        # OpenAI flow where the first delta carries id+name).
+                        yield {
+                            "type": "tool_call_delta",
+                            "index": my_idx,
+                            "id": tool_calls[my_idx]["id"],
+                            "name": tool_calls[my_idx]["name"],
+                            "arguments_delta": "",
+                        }
+                elif ev_type == "content_block_delta":
+                    delta = getattr(ev, "delta", None)
+                    if delta is None:
+                        continue
+                    blk_idx = getattr(ev, "index", 0)
+                    delta_type = getattr(delta, "type", None)
+                    if delta_type == "text_delta":
+                        text = getattr(delta, "text", "") or ""
+                        if text:
+                            text_acc += text
+                            yield {"type": "text_delta", "delta": text}
+                    elif delta_type == "input_json_delta":
+                        partial = getattr(delta, "partial_json", "") or ""
+                        if not partial:
+                            continue
+                        my_idx = block_to_tool_idx.get(blk_idx)
+                        if my_idx is None:
+                            continue
+                        tool_calls[my_idx]["arguments"] += partial
+                        yield {
+                            "type": "tool_call_delta",
+                            "index": my_idx,
+                            "id": tool_calls[my_idx]["id"],
+                            "name": tool_calls[my_idx]["name"],
+                            "arguments_delta": partial,
+                        }
+                # message_start / content_block_stop / message_delta /
+                # message_stop are not user-visible; we ignore them.
+
+        # Emit the same `complete` event the OpenAI backend produces so the
+        # outer loop can persist + execute tools without caring which
+        # backend ran.
+        yield {
+            "type": "complete",
+            "content": text_acc,
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"] or "{}",
+                    },
+                }
+                for tc in tool_calls
+                if tc["name"]
+            ],
         }
 
 
