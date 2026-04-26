@@ -21,7 +21,23 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`);
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    // Surface Pydantic 422 details (loc + msg) instead of an opaque
+    // "422 Unprocessable Content" — tells the user which field is bad.
+    if (r.status === 422) {
+      try {
+        const j = JSON.parse(text) as { detail?: { loc: (string | number)[]; msg: string }[] };
+        if (Array.isArray(j.detail)) {
+          const lines = j.detail.map(
+            (d) => `  ${d.loc.slice(1).join(".")}: ${d.msg}`,
+          );
+          throw new Error(`Validation failed:\n${lines.join("\n")}`);
+        }
+      } catch (_) { /* fall through */ }
+    }
+    throw new Error(`${r.status} ${r.statusText}: ${text}`);
+  }
   return r.json();
 }
 

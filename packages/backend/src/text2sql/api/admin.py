@@ -568,21 +568,21 @@ class _DatabaseConnector(BaseModel):
 
 
 class _LLMConnector(BaseModel):
+    """Numeric fields default to None and are coerced to typed ints/floats
+    inside the handler. This tolerates the JS form's habit of sending
+    `null` when a numeric input is cleared (Number("") → NaN →
+    JSON null) without 422'ing the whole request."""
     name: str
     kind: str = Field(..., description="azure_openai | openai | anthropic | openrouter | bedrock")
     set_primary: bool = True
     api_key: str = ""
-    # azure_openai
     endpoint: str = ""
     api_version: str = ""
     deployment: str = ""
-    # openai / anthropic / openrouter / bedrock
     model: str = ""
-    # bedrock
     region: str = "us-west-2"
-    # routing
-    max_tokens: int = 4096
-    temperature: float = 0.0
+    max_tokens: int | None = 4096
+    temperature: float | None = 0.0
 
 
 class _EmbeddingConnector(BaseModel):
@@ -590,19 +590,15 @@ class _EmbeddingConnector(BaseModel):
     kind: str = Field(..., description="azure_openai | openai | sentence_transformers | bedrock")
     set_primary: bool = True
     api_key: str = ""
-    # cloud
     endpoint: str = ""
     api_version: str = ""
     deployment: str = ""
     model: str = ""
-    # local sentence-transformers
     device: str = "cpu"
-    # bedrock
     region: str = "us-west-2"
     family: str = "titan"
-    # common
-    dim: int = 0
-    batch_size: int = 32
+    dim: int | None = None
+    batch_size: int | None = 32
 
 
 def _env_var_name(provider_name: str, suffix: str) -> str:
@@ -644,8 +640,8 @@ def _build_llm_provider_entry(c: _LLMConnector) -> tuple[dict[str, Any], dict[st
     entry: dict[str, Any] = {
         "kind": c.kind,
         "api_key_env": api_key_env,
-        "max_tokens": int(c.max_tokens),
-        "temperature": float(c.temperature),
+        "max_tokens": int(c.max_tokens) if c.max_tokens else 4096,
+        "temperature": float(c.temperature) if c.temperature is not None else 0.0,
     }
     if c.kind == "azure_openai":
         entry.update({"endpoint": c.endpoint, "api_version": c.api_version, "deployment": c.deployment})
@@ -660,7 +656,7 @@ def _build_llm_provider_entry(c: _LLMConnector) -> tuple[dict[str, Any], dict[st
 def _build_embedding_provider_entry(c: _EmbeddingConnector) -> tuple[dict[str, Any], dict[str, str]]:
     secrets: dict[str, str] = {}
     api_key_env = _env_var_name(c.name, "API_KEY")
-    entry: dict[str, Any] = {"kind": c.kind, "batch_size": int(c.batch_size)}
+    entry: dict[str, Any] = {"kind": c.kind, "batch_size": int(c.batch_size or 32)}
     if c.kind == "azure_openai":
         if c.api_key:
             secrets[api_key_env] = c.api_key
@@ -808,11 +804,15 @@ def test_llm_connector(c: _LLMConnector) -> _LLMTestResponse:
     from text2sql.providers import build_llm
     from text2sql.providers.base import LLMMessage
 
+    if not c.api_key:
+        return _LLMTestResponse(ok=False, error="api_key is empty",
+                                elapsed_ms=0.0, sample=None)
     tmp_env = f"_TEST_{_env_var_name(c.name, 'API_KEY')}"
     os.environ[tmp_env] = c.api_key
     spec_dict = {
         "kind": c.kind, "api_key_env": tmp_env,
-        "max_tokens": int(c.max_tokens), "temperature": float(c.temperature),
+        "max_tokens": int(c.max_tokens) if c.max_tokens else 64,
+        "temperature": float(c.temperature) if c.temperature is not None else 0.0,
     }
     if c.kind == "azure_openai":
         spec_dict.update({"endpoint": c.endpoint, "api_version": c.api_version, "deployment": c.deployment})
@@ -857,10 +857,14 @@ def test_embedding_connector(c: _EmbeddingConnector) -> _EmbeddingTestResponse:
     from text2sql.config import ProviderEntry
     from text2sql.providers import build_embedding
 
+    # Cloud kinds need a key; local ones don't.
+    if c.kind in ("azure_openai", "openai", "bedrock") and not c.api_key:
+        return _EmbeddingTestResponse(ok=False,
+                                      error=f"api_key required for kind={c.kind!r}",
+                                      elapsed_ms=0.0, dim=None)
     tmp_env = f"_TEST_{_env_var_name(c.name, 'API_KEY')}"
-    os.environ[tmp_env] = c.api_key
+    os.environ[tmp_env] = c.api_key or ""
     entry, _ = _build_embedding_provider_entry(c)
-    # Override api_key_env to the temp one
     if "api_key_env" in entry:
         entry["api_key_env"] = tmp_env
     t0 = time.perf_counter()
