@@ -34,7 +34,11 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from text2sql.config import RUNTIME_OVERRIDES_PATH, load_config
+from text2sql.config import (
+    RUNTIME_OVERRIDES_PATH,
+    RUNTIME_SECRETS_PATH,
+    load_config,
+)
 
 log = logging.getLogger(__name__)
 
@@ -519,3 +523,363 @@ class _temp_overlay:
                 pass
         else:
             self._path.write_bytes(self._original)
+
+
+# ── Connector endpoints — proper UI-driven connection forms ──────────────────
+
+
+def _load_secrets() -> dict[str, str]:
+    p = Path(RUNTIME_SECRETS_PATH)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _write_secrets(secrets: dict[str, str]) -> None:
+    p = Path(RUNTIME_SECRETS_PATH)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # 0600 — owner read/write only.
+    p.write_text(json.dumps(secrets, indent=2))
+    try:
+        os.chmod(p, 0o600)
+    except Exception:
+        pass
+
+
+class _DatabaseConnector(BaseModel):
+    """One-form-fits-all DB connector — what the UI submits."""
+    name: str = Field(..., description="A short name for this connection (becomes the provider key)")
+    kind: str = Field(..., description="postgresql | mssql")
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str = Field("", description="Plaintext password — stored in runtime_secrets.json (gitignored)")
+    set_primary: bool = True
+    # MSSQL-specific knobs (ignored for postgresql)
+    trust_server_certificate: bool = True
+    encrypt: bool = False
+    driver: str = "pymssql"
+    # Postgres-specific
+    schema_search_path: list[str] = Field(default_factory=lambda: ["edfi", "tpdm"])
+
+
+class _LLMConnector(BaseModel):
+    name: str
+    kind: str = Field(..., description="azure_openai | openai | anthropic | openrouter | bedrock")
+    set_primary: bool = True
+    api_key: str = ""
+    # azure_openai
+    endpoint: str = ""
+    api_version: str = ""
+    deployment: str = ""
+    # openai / anthropic / openrouter / bedrock
+    model: str = ""
+    # bedrock
+    region: str = "us-west-2"
+    # routing
+    max_tokens: int = 4096
+    temperature: float = 0.0
+
+
+class _EmbeddingConnector(BaseModel):
+    name: str
+    kind: str = Field(..., description="azure_openai | openai | sentence_transformers | bedrock")
+    set_primary: bool = True
+    api_key: str = ""
+    # cloud
+    endpoint: str = ""
+    api_version: str = ""
+    deployment: str = ""
+    model: str = ""
+    # local sentence-transformers
+    device: str = "cpu"
+    # bedrock
+    region: str = "us-west-2"
+    family: str = "titan"
+    # common
+    dim: int = 0
+    batch_size: int = 32
+
+
+def _env_var_name(provider_name: str, suffix: str) -> str:
+    """Map a provider key + suffix to an env-var-style name we'll store
+    in the secrets file. e.g. (\"my-prod-db\", \"PASSWORD\") → \"MY_PROD_DB_PASSWORD\"."""
+    safe = "".join(c.upper() if c.isalnum() else "_" for c in provider_name)
+    return f"{safe}_{suffix}"
+
+
+def _build_db_provider_entry(c: _DatabaseConnector) -> tuple[dict[str, Any], dict[str, str]]:
+    """Translate a DatabaseConnector form into a YAML-shape provider dict
+    + a (env-name → value) secrets-update dict."""
+    secrets: dict[str, str] = {}
+    pwd_env = _env_var_name(c.name, "PASSWORD")
+    if c.password:
+        secrets[pwd_env] = c.password
+    entry: dict[str, Any] = {
+        "kind": c.kind,
+        "host": c.host,
+        "port": c.port,
+        "database": c.database,
+        "user": c.user,
+        "password_env": pwd_env,
+    }
+    if c.kind == "postgresql":
+        entry["schema_search_path"] = list(c.schema_search_path)
+    elif c.kind == "mssql":
+        entry["trust_server_certificate"] = bool(c.trust_server_certificate)
+        entry["encrypt"] = bool(c.encrypt)
+        entry["driver"] = c.driver
+    return entry, secrets
+
+
+def _build_llm_provider_entry(c: _LLMConnector) -> tuple[dict[str, Any], dict[str, str]]:
+    secrets: dict[str, str] = {}
+    api_key_env = _env_var_name(c.name, "API_KEY")
+    if c.api_key:
+        secrets[api_key_env] = c.api_key
+    entry: dict[str, Any] = {
+        "kind": c.kind,
+        "api_key_env": api_key_env,
+        "max_tokens": int(c.max_tokens),
+        "temperature": float(c.temperature),
+    }
+    if c.kind == "azure_openai":
+        entry.update({"endpoint": c.endpoint, "api_version": c.api_version, "deployment": c.deployment})
+    elif c.kind in ("openai", "anthropic", "openrouter"):
+        entry["model"] = c.model
+    elif c.kind == "bedrock":
+        entry["model"] = c.model
+        entry["region"] = c.region
+    return entry, secrets
+
+
+def _build_embedding_provider_entry(c: _EmbeddingConnector) -> tuple[dict[str, Any], dict[str, str]]:
+    secrets: dict[str, str] = {}
+    api_key_env = _env_var_name(c.name, "API_KEY")
+    entry: dict[str, Any] = {"kind": c.kind, "batch_size": int(c.batch_size)}
+    if c.kind == "azure_openai":
+        if c.api_key:
+            secrets[api_key_env] = c.api_key
+        entry.update({"deployment": c.deployment, "endpoint": c.endpoint,
+                      "api_version": c.api_version, "api_key_env": api_key_env,
+                      "dim": int(c.dim or 3072)})
+    elif c.kind == "openai":
+        if c.api_key:
+            secrets[api_key_env] = c.api_key
+        entry.update({"model": c.model, "api_key_env": api_key_env, "dim": int(c.dim or 1536)})
+    elif c.kind == "sentence_transformers":
+        entry.update({"model": c.model, "device": c.device,
+                      "dim": int(c.dim) if c.dim else None, "normalize": True})
+        # No api_key for local models
+        entry = {k: v for k, v in entry.items() if v is not None}
+    elif c.kind == "bedrock":
+        if c.api_key:
+            secrets[api_key_env] = c.api_key
+        entry.update({"model": c.model, "region": c.region,
+                      "family": c.family, "api_key_env": api_key_env,
+                      "dim": int(c.dim or 1024)})
+    return entry, secrets
+
+
+def _persist_provider(
+    section: str,
+    provider_name: str,
+    entry: dict[str, Any],
+    secrets_update: dict[str, str],
+    set_primary: bool,
+) -> dict[str, Any]:
+    """Common write-path: merge entry into overlay + section providers,
+    optionally set as primary, persist secrets file. Validates the merged
+    config still loads before persisting."""
+    # 1. Merge secrets first (load_config will read them at validation time)
+    if secrets_update:
+        secrets = _load_secrets()
+        secrets.update(secrets_update)
+        _write_secrets(secrets)
+
+    # 2. Merge the provider entry into the overlay
+    overlay = _load_overlay()
+    section_overlay = dict(overlay.get(section) or {})
+    providers = dict(section_overlay.get("providers") or {})
+    providers[provider_name] = entry
+    section_overlay["providers"] = providers
+    if set_primary:
+        section_overlay["primary"] = provider_name
+    overlay[section] = section_overlay
+
+    # 3. Validate by loading; rollback secrets on failure
+    try:
+        with _temp_overlay(overlay):
+            test_cfg = load_config()
+            if section == "target_db":
+                _ = test_cfg.target_db_provider()
+            elif section == "embeddings":
+                _ = test_cfg.embedding_provider()
+            elif section == "llm":
+                _ = test_cfg.llm_for_task("sql_generation")
+    except Exception as e:
+        # Roll back the secrets we wrote since the overlay won't be persisted
+        if secrets_update:
+            secrets = _load_secrets()
+            for k in secrets_update:
+                secrets.pop(k, None)
+            _write_secrets(secrets)
+        raise HTTPException(400, f"connector failed validation: {e}") from e
+
+    _write_overlay(overlay)
+    return overlay
+
+
+# ── Database connector endpoints ───────────────────────────────────────────
+
+
+@router.post("/connector/database/test", response_model=_DbTestResponse)
+def test_database_connector(c: _DatabaseConnector) -> _DbTestResponse:
+    """Build a SqlEngine from form values (without persisting) and run
+    SELECT 1. Lets the UI surface "✓ connected, SQL Server 2022" before
+    the user clicks Save."""
+    import time
+    from text2sql.config import ProviderEntry
+    from text2sql.providers import build_sql_engine
+
+    # Stash the password under a temp env var so build_sql_engine's
+    # _resolve_secret picks it up. Cleaned up in finally.
+    tmp_env = f"_TEST_{_env_var_name(c.name, 'PASSWORD')}"
+    os.environ[tmp_env] = c.password
+    spec_dict = {
+        "kind": c.kind, "host": c.host, "port": c.port,
+        "database": c.database, "user": c.user, "password_env": tmp_env,
+    }
+    if c.kind == "postgresql":
+        spec_dict["schema_search_path"] = list(c.schema_search_path)
+    elif c.kind == "mssql":
+        spec_dict["trust_server_certificate"] = c.trust_server_certificate
+        spec_dict["encrypt"] = c.encrypt
+        spec_dict["driver"] = c.driver
+    t0 = time.perf_counter()
+    try:
+        engine = build_sql_engine(ProviderEntry(**spec_dict))
+        engine.execute("SELECT 1 AS ok", limit=1)
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        version = None
+        try:
+            if engine.dialect == "postgresql":
+                version = (engine.execute("SELECT version() AS v", limit=1) or [{}])[0].get("v")
+            elif engine.dialect == "mssql":
+                version = (engine.execute("SELECT @@VERSION AS v", limit=1) or [{}])[0].get("v")
+        except Exception:
+            pass
+        return _DbTestResponse(ok=True, elapsed_ms=elapsed,
+                               server_version=str(version)[:200] if version else None)
+    except Exception as e:
+        return _DbTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
+                               elapsed_ms=(time.perf_counter() - t0) * 1000.0)
+    finally:
+        os.environ.pop(tmp_env, None)
+
+
+@router.post("/connector/database", response_model=_ResolvedConfigResponse)
+def save_database_connector(c: _DatabaseConnector) -> dict[str, Any]:
+    """Register this DB as a target_db provider and (optionally) make it
+    primary. Persists the password to the gitignored secrets file."""
+    entry, secrets = _build_db_provider_entry(c)
+    _persist_provider("target_db", c.name, entry, secrets, c.set_primary)
+    return get_config()
+
+
+# ── LLM connector endpoints ────────────────────────────────────────────────
+
+
+class _LLMTestResponse(BaseModel):
+    ok: bool
+    error: str | None = None
+    elapsed_ms: float | None = None
+    sample: str | None = None
+
+
+@router.post("/connector/llm/test", response_model=_LLMTestResponse)
+def test_llm_connector(c: _LLMConnector) -> _LLMTestResponse:
+    import time
+    from text2sql.config import ProviderEntry
+    from text2sql.providers import build_llm
+    from text2sql.providers.base import LLMMessage
+
+    tmp_env = f"_TEST_{_env_var_name(c.name, 'API_KEY')}"
+    os.environ[tmp_env] = c.api_key
+    spec_dict = {
+        "kind": c.kind, "api_key_env": tmp_env,
+        "max_tokens": int(c.max_tokens), "temperature": float(c.temperature),
+    }
+    if c.kind == "azure_openai":
+        spec_dict.update({"endpoint": c.endpoint, "api_version": c.api_version, "deployment": c.deployment})
+    elif c.kind == "bedrock":
+        spec_dict.update({"model": c.model, "region": c.region})
+    else:
+        spec_dict["model"] = c.model
+    t0 = time.perf_counter()
+    try:
+        llm = build_llm(ProviderEntry(**spec_dict))
+        out = llm.complete([LLMMessage(role="user", content="Reply with the single word: PONG")], max_tokens=16)
+        return _LLMTestResponse(ok=True,
+                                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+                                sample=(out or "")[:200])
+    except Exception as e:
+        return _LLMTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
+                                elapsed_ms=(time.perf_counter() - t0) * 1000.0)
+    finally:
+        os.environ.pop(tmp_env, None)
+
+
+@router.post("/connector/llm", response_model=_ResolvedConfigResponse)
+def save_llm_connector(c: _LLMConnector) -> dict[str, Any]:
+    entry, secrets = _build_llm_provider_entry(c)
+    _persist_provider("llm", c.name, entry, secrets, c.set_primary)
+    return get_config()
+
+
+# ── Embedding connector endpoints ──────────────────────────────────────────
+
+
+class _EmbeddingTestResponse(BaseModel):
+    ok: bool
+    error: str | None = None
+    elapsed_ms: float | None = None
+    dim: int | None = None
+
+
+@router.post("/connector/embedding/test", response_model=_EmbeddingTestResponse)
+def test_embedding_connector(c: _EmbeddingConnector) -> _EmbeddingTestResponse:
+    import time
+    from text2sql.config import ProviderEntry
+    from text2sql.providers import build_embedding
+
+    tmp_env = f"_TEST_{_env_var_name(c.name, 'API_KEY')}"
+    os.environ[tmp_env] = c.api_key
+    entry, _ = _build_embedding_provider_entry(c)
+    # Override api_key_env to the temp one
+    if "api_key_env" in entry:
+        entry["api_key_env"] = tmp_env
+    t0 = time.perf_counter()
+    try:
+        emb = build_embedding(ProviderEntry(**entry))
+        v = emb.embed(["smoke test"], kind="query")
+        return _EmbeddingTestResponse(
+            ok=True, dim=int(v.shape[1]),
+            elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+        )
+    except Exception as e:
+        return _EmbeddingTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
+                                      elapsed_ms=(time.perf_counter() - t0) * 1000.0)
+    finally:
+        os.environ.pop(tmp_env, None)
+
+
+@router.post("/connector/embedding", response_model=_ResolvedConfigResponse)
+def save_embedding_connector(c: _EmbeddingConnector) -> dict[str, Any]:
+    entry, secrets = _build_embedding_provider_entry(c)
+    _persist_provider("embeddings", c.name, entry, secrets, c.set_primary)
+    return get_config()

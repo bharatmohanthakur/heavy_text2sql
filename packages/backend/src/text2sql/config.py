@@ -133,6 +133,25 @@ class AppConfig(BaseModel):
 
 
 RUNTIME_OVERRIDES_PATH = REPO_ROOT / "data/artifacts/runtime_overrides.json"
+RUNTIME_SECRETS_PATH = REPO_ROOT / "data/artifacts/runtime_secrets.json"
+
+
+def _load_runtime_secrets() -> dict[str, str]:
+    """Read {ENV_VAR_NAME: value} from the gitignored secrets file.
+
+    These are merged into the env dict during interpolation BELOW process
+    env (so a real env var still wins), but ABOVE nothing else. This lets
+    the UI take a plaintext password / API key, persist it on disk, and
+    have it transparently fill `${MY_DB_PASSWORD}` references in YAML.
+    """
+    p = Path(RUNTIME_SECRETS_PATH)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+        return {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        return {}
 
 
 def _deep_merge(base: Any, overlay: Any) -> Any:
@@ -169,7 +188,15 @@ def load_config(
     env_path = Path(env_file) if env_file else REPO_ROOT / ".env"
     overlay_p = Path(overlay_path) if overlay_path else RUNTIME_OVERRIDES_PATH
 
-    env: dict[str, str] = {**_load_env_file(env_path), **os.environ}
+    # Resolution order for ${VAR} interpolation, lowest precedence first:
+    #   1. data/artifacts/runtime_secrets.json (UI-managed)
+    #   2. .env file
+    #   3. process env
+    env: dict[str, str] = {
+        **_load_runtime_secrets(),
+        **_load_env_file(env_path),
+        **os.environ,
+    }
 
     raw = yaml.safe_load(cfg_path.read_text())
     if overlay_p.exists():
