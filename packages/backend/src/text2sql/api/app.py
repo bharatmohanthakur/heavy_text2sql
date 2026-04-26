@@ -124,6 +124,10 @@ def build_app(
         allow_headers=["*"],
     )
 
+    # Mount the admin / settings router (read/write runtime config + DB pings).
+    from text2sql.api.admin import router as _admin_router
+    app.include_router(_admin_router)
+
     # ── Health ──────────────────────────────────────────────────────────────
     @app.get("/health")
     def health() -> dict[str, Any]:

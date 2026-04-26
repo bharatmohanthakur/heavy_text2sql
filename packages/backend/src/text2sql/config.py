@@ -7,6 +7,7 @@ from the merged environment (process env wins over .env).
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -131,16 +132,52 @@ class AppConfig(BaseModel):
         return self.target_db.providers[self.target_db.primary]
 
 
+RUNTIME_OVERRIDES_PATH = REPO_ROOT / "data/artifacts/runtime_overrides.json"
+
+
+def _deep_merge(base: Any, overlay: Any) -> Any:
+    """Merge `overlay` over `base` recursively. dict + dict → recursive merge;
+    everything else → overlay wins."""
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        out = dict(base)
+        for k, v in overlay.items():
+            out[k] = _deep_merge(base.get(k), v) if k in base else v
+        return out
+    return overlay if overlay is not None else base
+
+
 def load_config(
     config_path: Path | str | None = None,
     env_file: Path | str | None = None,
+    *,
+    overlay_path: Path | str | None = None,
 ) -> AppConfig:
-    """Load YAML config, interpolate env vars, and return a typed AppConfig."""
+    """Load YAML config, interpolate env vars, layer runtime overrides, and
+    return a typed AppConfig.
+
+    Resolution order (lowest → highest precedence):
+      1. configs/default.yaml         (committed defaults)
+      2. data/artifacts/runtime_overrides.json  (UI-written, gitignored)
+      3. process env / .env           (interpolation source for ${VAR}s)
+
+    Secrets stay in .env — the overlay only changes selectors (which
+    provider is `primary`, which task routes where, embedding kind, etc.).
+    The runtime overrides file is gitignored via the existing
+    data/artifacts/ rule so it never leaks into commits.
+    """
     cfg_path = Path(config_path) if config_path else REPO_ROOT / "configs" / "default.yaml"
     env_path = Path(env_file) if env_file else REPO_ROOT / ".env"
+    overlay_p = Path(overlay_path) if overlay_path else RUNTIME_OVERRIDES_PATH
 
     env: dict[str, str] = {**_load_env_file(env_path), **os.environ}
 
     raw = yaml.safe_load(cfg_path.read_text())
+    if overlay_p.exists():
+        try:
+            overlay = json.loads(overlay_p.read_text())
+            raw = _deep_merge(raw, overlay)
+        except Exception:
+            # Bad overlay shouldn't brick boot — log and continue.
+            pass
     interpolated = _interpolate(raw, env)
     return AppConfig.model_validate(interpolated)
