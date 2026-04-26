@@ -199,10 +199,21 @@ def _truncate_for_prompt(rows: list[dict], max_rows: int = 25) -> list[dict]:
 
 
 class VizDescriber:
-    """Run the viz + description LLM calls in parallel."""
+    """Run the viz + description LLM calls in parallel.
 
-    def __init__(self, llm: LLMProvider) -> None:
+    The two calls are wired to separate task slots in `configs/default.yaml`
+    (`visualization` and `description`) so the user can route each to a
+    different model — typically a stronger one for chart-spec generation
+    (which has a strict JSON schema) and a cheaper one for prose summary.
+    """
+
+    def __init__(
+        self,
+        llm: LLMProvider,
+        description_llm: LLMProvider | None = None,
+    ) -> None:
         self._llm = llm
+        self._description_llm = description_llm or llm
 
     def annotate(
         self,
@@ -269,7 +280,7 @@ class VizDescriber:
             f"Result has {shape.row_count} row(s). First {len(sample)}:\n"
             f"{json.dumps(sample, default=str)[:2500]}\n"
         )
-        raw = self._llm.complete(
+        raw = self._description_llm.complete(
             [LLMMessage(role="system", content=_DESC_SYSTEM),
              LLMMessage(role="user", content=user)],
             schema=DESCRIPTION_SCHEMA,

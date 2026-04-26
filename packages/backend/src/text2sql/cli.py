@@ -169,7 +169,10 @@ def build_table_catalog_cmd(
     desc_gen = None
     if not skip_llm:
         try:
-            llm = build_llm(cfg.llm_for_task("classifier_fallback"))
+            # Component 4 — catalog description generation has its own task
+            # slot so users can route a cheaper model here (it runs once
+            # per ~800 tables at build time).
+            llm = build_llm(cfg.llm_for_task("catalog_description"))
             desc_gen = DescriptionGenerator(
                 llm,
                 cache_path=REPO_ROOT / "data/artifacts/.description_cache.json",
@@ -466,17 +469,28 @@ def _build_pipeline():
 
     embedder = build_embedding(cfg.embedding_provider())
     store = build_vector_store(cfg.vector_store_provider())
-    llm = build_llm(cfg.llm_for_task("sql_generation"))
     sql_engine = build_sql_engine(cfg.target_db_provider())
+
+    # One LLM per task slot, honoring configs/default.yaml's task_routing.
+    # When two slots resolve to the same provider entry, build_llm is
+    # idempotent enough that the duplicate-instantiation cost is just two
+    # cheap API client objects — no extra connections.
+    sql_llm        = build_llm(cfg.llm_for_task("sql_generation"))
+    repair_llm     = build_llm(cfg.llm_for_task("repair_loop"))
+    viz_llm        = build_llm(cfg.llm_for_task("visualization"))
+    description_llm = build_llm(cfg.llm_for_task("description"))
+    classifier_llm = build_llm(cfg.llm_for_task("classifier_fallback"))
 
     domain_catalog = load_domain_catalog(manifest)
     domain_classifier = QueryDomainClassifier(
-        llm, domain_catalog,
+        classifier_llm, domain_catalog,
         cache_path=REPO_ROOT / "data/artifacts/.query_classification_cache.json",
     )
     retriever = TableRetriever(embedder, store)
     value_index = build_value_index(catalog)
-    entity_resolver = EntityResolver(value_index, embedder=embedder, store=store, llm=llm)
+    entity_resolver = EntityResolver(
+        value_index, embedder=embedder, store=store, llm=classifier_llm,
+    )
 
     gold_store = None
     try:
@@ -493,7 +507,10 @@ def _build_pipeline():
         entity_resolver=entity_resolver,
         gold_store=gold_store,
         sql_engine=sql_engine,
-        llm=llm,
+        llm=sql_llm,
+        repair_llm=repair_llm,
+        viz_llm=viz_llm,
+        description_llm=description_llm,
     )
 
 

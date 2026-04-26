@@ -20,12 +20,16 @@ llm:
   primary: azure-gpt-4o
   fallback: anthropic-sonnet
   task_routing:
-    sql_generation: azure-gpt-4o
-    repair_loop: azure-gpt-4o
-    visualization: azure-gpt-4o
-    description: azure-gpt-4o
-    cluster_naming: azure-gpt-4o   # cheap-tier swap later
-    classifier_fallback: azure-gpt-4o
+    # Each task slot is honored by exactly one component. Route a stronger
+    # model to sql_generation + repair_loop and a cheaper one to
+    # description / cluster_naming / catalog_description for big cost wins.
+    sql_generation:        azure-gpt-4o   # Component 8 — main NL→SQL
+    repair_loop:           azure-gpt-4o   # Component 9 — fix-the-error loop
+    visualization:         azure-gpt-4o   # Component 10 — Vega-Lite spec (strict schema)
+    description:           azure-gpt-4o   # Component 10 — NL summary (free text)
+    cluster_naming:        azure-gpt-4o   # Component 2 — sub-cluster auto-naming
+    classifier_fallback:   azure-gpt-4o   # Components 2b + 6 — runtime classifier + entity disambiguation
+    catalog_description:   azure-gpt-4o   # Component 4 — table/column LLM descriptions (one-time)
 
   providers:
     azure-gpt-4o:

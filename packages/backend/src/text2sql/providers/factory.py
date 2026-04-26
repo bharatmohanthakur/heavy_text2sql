@@ -100,8 +100,10 @@ def _ensure_loaded() -> None:
     from text2sql.providers.llm import anthropic as _llm_anthropic  # noqa: F401
     from text2sql.providers.llm import openai as _llm_openai  # noqa: F401
     from text2sql.providers.llm import openrouter as _llm_openrouter  # noqa: F401
+    from text2sql.providers.llm import bedrock as _llm_bedrock  # noqa: F401
     from text2sql.providers.embeddings import azure_openai as _emb_azure  # noqa: F401
     from text2sql.providers.embeddings import openai as _emb_openai  # noqa: F401
+    from text2sql.providers.embeddings import bedrock as _emb_bedrock  # noqa: F401
     # sentence-transformers is optional — register only if importable so a
     # missing dep doesn't break users who only use cloud embeddings.
     try:
