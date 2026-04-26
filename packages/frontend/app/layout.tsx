@@ -13,6 +13,7 @@ const NAV = [
   { href: "/tables", label: "Tables" },
   { href: "/domains", label: "Domains" },
   { href: "/gold", label: "Gold SQL" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

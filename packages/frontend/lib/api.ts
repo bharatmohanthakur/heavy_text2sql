@@ -182,6 +182,64 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message, conversation_id }),
     }),
+
+  // ── Admin / Settings ────────────────────────────────────────────────
+  adminConfig: () => request<AdminConfig>(`/admin/config`),
+
+  adminPatchConfig: (patch: Partial<AdminConfig>) =>
+    request<AdminConfig>(`/admin/config`, {
+      method: "POST",
+      body: JSON.stringify(patch),
+    }),
+
+  adminTestDb: (provider: string) =>
+    request<DbTestResult>(`/admin/test_db`, {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    }),
+
+  adminTestMetadataDb: () =>
+    request<DbTestResult>(`/admin/test_metadata_db`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+};
+
+// ── Admin types ────────────────────────────────────────────────────────────
+
+export type ProviderEntry = {
+  kind: string;
+  [key: string]: unknown;
+};
+
+export type LLMSection = {
+  primary: string;
+  fallback: string | null;
+  task_routing: Record<string, string>;
+  providers: Record<string, ProviderEntry>;
+};
+
+export type SimpleSection = {
+  primary: string;
+  providers: Record<string, ProviderEntry>;
+};
+
+export type AdminConfig = {
+  llm: LLMSection;
+  embeddings: SimpleSection;
+  vector_store: SimpleSection;
+  target_db: SimpleSection;
+  metadata_db: Record<string, unknown>;
+  overlay: Record<string, unknown>;
+  overlay_path: string;
+  env_present: Record<string, boolean>;
+};
+
+export type DbTestResult = {
+  ok: boolean;
+  error: string | null;
+  elapsed_ms: number | null;
+  server_version: string | null;
 };
 
 // ── Chat types ────────────────────────────────────────────────────────────
