@@ -39,6 +39,14 @@ dev = [
     "mypy>=1.10",
     "types-PyYAML",
 ]
+# Local embeddings via Hugging Face sentence-transformers. Install with
+#   uv sync --extra local-embeddings
+# Only needed when configs/default.yaml's primary embedding provider has
+# kind: sentence_transformers (e.g. bge-m3-local, e5-mistral-7b-local).
+local-embeddings = [
+    "sentence-transformers>=3.0",
+    "torch>=2.2",
+]
 
 [project.scripts]
 text2sql = "text2sql.cli:app"

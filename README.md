@@ -170,10 +170,71 @@ llm:
 
 ### Embedding providers
 
-| name | kind | dim |
+| name | kind | dim | runs locally? |
+|---|---|---|---|
+| `azure-text-embedding-3-large` (default) | `azure_openai` | 3072 | no |
+| `openai-text-embedding-3-large` | `openai` | 3072 | no |
+| `openai-text-embedding-3-small` | `openai` | 1536 | no |
+| `bge-m3-local` | `sentence_transformers` (BAAI/bge-m3) | 1024 | **yes — CPU/GPU** |
+| `bge-large-en-local` | `sentence_transformers` (BAAI/bge-large-en-v1.5) | 1024 | **yes — CPU** |
+| `e5-mistral-7b-local` | `sentence_transformers` (intfloat/e5-mistral-7b-instruct) | 4096 | **yes — GPU** |
+| `multilingual-e5-large-local` | `sentence_transformers` (intfloat/multilingual-e5-large) | 1024 | **yes — CPU** |
+| `minilm-l6-local` | `sentence_transformers` (all-MiniLM-L6-v2) | 384 | **yes — CPU, tiny** |
+
+#### Use a local Hugging Face model (offline, no per-call cost)
+
+```bash
+# 1. Install the optional extra (one-time, ~3 GB for torch + sentence-transformers)
+uv sync --extra local-embeddings
+
+# 2. Pick a local provider in .env
+echo "EMBEDDING_PROVIDER=bge-m3-local" >> .env
+# (or: bge-large-en-local | e5-mistral-7b-local | multilingual-e5-large-local | minilm-l6-local)
+
+# 3. Re-build the FAISS index with the new model (must rebuild — different
+#    embedding dimension means the old index is incompatible)
+uv run text2sql index-catalog
+```
+
+The first `index-catalog` after switching downloads the model weights to
+`~/.cache/huggingface/` (1–8 GB depending on the model). Subsequent runs use
+the local cache.
+
+To add a model not listed above (e.g. `nomic-embed-text-v1.5`,
+`Snowflake/arctic-embed-l`, your own fine-tune), append it under
+`embeddings.providers` in `configs/default.yaml`:
+
+```yaml
+embeddings:
+  providers:
+    my-custom-encoder:
+      kind: sentence_transformers
+      model: nomic-ai/nomic-embed-text-v1.5
+      device: cpu                   # cpu | cuda | mps
+      dim: 768
+      batch_size: 32
+      normalize: true
+      trust_remote_code: true       # required by some HF repos
+      query_prefix: "search_query: "    # E5/Nomic-style prompts (optional)
+      doc_prefix: "search_document: "
+```
+
+Then `EMBEDDING_PROVIDER=my-custom-encoder` in `.env`.
+
+#### When to pick local vs cloud
+
+| | local (BGE-M3, E5) | cloud (Azure / OpenAI) |
 |---|---|---|
-| `azure-text-embedding-3-large` (default) | `azure_openai` | 3072 |
-| `openai-text-embedding-3-large` | `openai` | 3072 |
+| First-run cost | model download (1–8 GB) | API key only |
+| Per-call cost | $0 | $0.13 / 1M tokens (3-large) |
+| Privacy | data never leaves the box | data sent to vendor |
+| Quality on Ed-Fi text | within 1–3 pts of 3-large | best-in-class |
+| GPU helpful for | E5-Mistral-7B, big rebuilds | n/a |
+| Index size | smaller (1024-dim < 3072-dim) | larger |
+
+For dev / personal use, **`bge-large-en-local`** on CPU is the sweet spot:
+fast enough for the 829-table catalog (~30s rebuild), no key required,
+quality close to OpenAI.
 
 ### Vector stores
 

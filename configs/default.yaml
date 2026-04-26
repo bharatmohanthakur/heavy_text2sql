@@ -91,9 +91,10 @@ llm:
       x_title: text2sql
 
 embeddings:
-  primary: azure-text-embedding-3-large
+  primary: ${EMBEDDING_PROVIDER:-azure-text-embedding-3-large}
 
   providers:
+    # ── Cloud (default) ──────────────────────────────────────────────────
     azure-text-embedding-3-large:
       kind: azure_openai
       deployment: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}
@@ -107,6 +108,59 @@ embeddings:
       model: text-embedding-3-large
       api_key_env: OPENAI_API_KEY
       dim: 3072
+      batch_size: 64
+    openai-text-embedding-3-small:
+      kind: openai
+      model: text-embedding-3-small
+      api_key_env: OPENAI_API_KEY
+      dim: 1536
+      batch_size: 64
+
+    # ── Local Hugging Face / sentence-transformers (no per-call cost, no
+    #    network egress). Pick one and set EMBEDDING_PROVIDER=<name>.
+    #    The model auto-downloads to HF_HOME (~/.cache/huggingface/) on
+    #    first use. CPU works fine for the 829-table catalog; set
+    #    `device: cuda` or `mps` for big rebuilds. ──────────────────────
+    bge-m3-local:
+      kind: sentence_transformers
+      model: BAAI/bge-m3                # 8192-token context, 1024-dim
+      device: cpu                       # cpu | cuda | mps
+      dim: 1024
+      batch_size: 16
+      normalize: true
+    bge-large-en-local:
+      kind: sentence_transformers
+      model: BAAI/bge-large-en-v1.5     # 1024-dim, fast on CPU
+      device: cpu
+      dim: 1024
+      batch_size: 32
+      normalize: true
+    e5-mistral-7b-local:
+      kind: sentence_transformers
+      model: intfloat/e5-mistral-7b-instruct
+      device: cuda                      # 7B model — needs a GPU
+      dim: 4096
+      batch_size: 4
+      normalize: true
+      # E5-style prompts: prepend "query: " to queries, "passage: " to docs.
+      query_prefix: "query: "
+      doc_prefix: "passage: "
+    multilingual-e5-large-local:
+      kind: sentence_transformers
+      model: intfloat/multilingual-e5-large
+      device: cpu
+      dim: 1024
+      batch_size: 16
+      normalize: true
+      query_prefix: "query: "
+      doc_prefix: "passage: "
+    minilm-l6-local:
+      kind: sentence_transformers
+      model: sentence-transformers/all-MiniLM-L6-v2  # tiny, ultra-fast
+      device: cpu
+      dim: 384
+      batch_size: 64
+      normalize: true
 
 vector_store:
   primary: faiss-local
