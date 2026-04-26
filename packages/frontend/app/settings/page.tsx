@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AdminConfig, DbTestResult, ProviderEntry, api } from "@/lib/api";
+import { AdminConfig, DbTestResult, JobStatus, ProviderEntry, api, streamJob } from "@/lib/api";
 
 /* Settings page — view + edit the resolved runtime config.
  *
@@ -237,6 +237,113 @@ export default function SettingsPage() {
           {JSON.stringify(config.overlay, null, 2)}
         </pre>
       </Card>
+
+      <Card title="Rebuild" subtitle="Run any subset of build stages. Each stage spawns the same `text2sql` CLI command an operator would run; output streams here live.">
+        <RebuildPanel />
+      </Card>
+    </div>
+  );
+}
+
+// ── Rebuild panel ──────────────────────────────────────────────────────────
+
+const ALL_STAGES: { id: string; label: string; help: string }[] = [
+  { id: "ingest",   label: "Ingest Ed-Fi metadata",     help: "Fetch ApiModel.json + ForeignKeys.sql." },
+  { id: "classify", label: "Classify tables",            help: "Map tables → Ed-Fi domains." },
+  { id: "graph",    label: "FK graph + APSP",            help: "Build the rustworkx graph + dist/next-hop." },
+  { id: "catalog",  label: "Table catalog (LLM descriptions)", help: "One-time, ~5 min. Uses catalog_description LLM slot." },
+  { id: "index",    label: "Embed + FAISS index",        help: "Re-embed catalog with the current embedding provider." },
+  { id: "gold-seed",label: "Gold few-shot seed",         help: "Load gold_queries_bootstrap.yaml, exec-validate against the live DB." },
+];
+
+function RebuildPanel() {
+  const [selected, setSelected] = useState<Set<string>>(new Set(["index"]));
+  const [job, setJob] = useState<JobStatus | null>(null);
+  const [lines, setLines] = useState<string[]>([]);
+  const [running, setRunning] = useState(false);
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function start() {
+    if (running || selected.size === 0) return;
+    setRunning(true);
+    setLines([]);
+    setJob(null);
+    try {
+      const created = await api.adminRebuild(Array.from(selected));
+      setJob(created);
+      streamJob(created.id, (ev) => {
+        if (ev.type === "line") {
+          setLines((l) => [...l, ev.line]);
+        } else if (ev.type === "status") {
+          setJob({ ...ev });
+        }
+      }).catch((e) => {
+        setLines((l) => [...l, `[stream error] ${e}`]);
+      }).finally(() => {
+        setRunning(false);
+      });
+    } catch (e) {
+      setLines((l) => [...l, `[start failed] ${e instanceof Error ? e.message : String(e)}`]);
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {ALL_STAGES.map((s) => (
+          <label key={s.id} className="flex items-start gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.has(s.id)}
+              disabled={running}
+              onChange={() => toggle(s.id)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-mono text-accent">{s.label}</span>
+              <span className="block text-muted">{s.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={start}
+          disabled={running || selected.size === 0}
+          className="border border-accent text-accent rounded px-3 py-1 text-sm disabled:opacity-50"
+        >
+          {running ? "Running…" : `Run ${selected.size} stage${selected.size === 1 ? "" : "s"}`}
+        </button>
+        {job && (
+          <span className="text-xs text-muted">
+            job <span className="font-mono">{job.id.slice(0, 8)}</span>
+            {" — "}
+            <span className={
+              job.status === "succeeded" ? "text-emerald-400"
+              : job.status === "failed" ? "text-red-400"
+              : "text-accent"
+            }>{job.status}</span>
+            {job.current_stage && <> · stage <span className="text-accent">{job.current_stage}</span></>}
+            {job.exit_code != null && <> · exit {job.exit_code}</>}
+          </span>
+        )}
+      </div>
+
+      {(running || lines.length > 0) && (
+        <pre className="bg-black/60 border border-border rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre"
+             style={{ maxHeight: 400, overflowY: "auto" }}>
+          {lines.join("\n") || "(waiting for output…)"}
+        </pre>
+      )}
     </div>
   );
 }

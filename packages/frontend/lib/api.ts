@@ -203,6 +203,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+
+  adminRebuild: (stages: string[]) =>
+    request<JobStatus>(`/admin/jobs/rebuild`, {
+      method: "POST",
+      body: JSON.stringify({ stages }),
+    }),
+
+  adminJob: (id: string) => request<JobStatus>(`/admin/jobs/${id}`),
 };
 
 // ── Admin types ────────────────────────────────────────────────────────────
@@ -241,6 +249,57 @@ export type DbTestResult = {
   elapsed_ms: number | null;
   server_version: string | null;
 };
+
+export type JobStatus = {
+  id: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  stages: string[];
+  current_stage: string | null;
+  exit_code: number | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  log_tail: string[];
+};
+
+export type JobStreamEvent =
+  | ({ type: "status" } & JobStatus)
+  | { type: "line"; line: string };
+
+/** Open the SSE log stream for a rebuild job. Same fetch+ReadableStream
+ * pattern as streamChat — yields per-line and per-status frames. */
+export async function streamJob(
+  id: string,
+  onEvent: (ev: JobStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${BASE}/admin/jobs/${id}/stream`, { signal });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`job stream failed ${res.status}: ${text}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)) as JobStreamEvent);
+        } catch (e) {
+          console.warn("bad job-stream frame", line, e);
+        }
+      }
+    }
+  }
+}
 
 // ── Chat types ────────────────────────────────────────────────────────────
 

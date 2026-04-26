@@ -5,6 +5,9 @@ Endpoints (all under `/admin/`):
   POST /admin/config             — write-through to runtime_overrides.json
   POST /admin/test_db            — smoke a target_db spec (`SELECT 1`)
   POST /admin/test_metadata_db   — smoke the metadata DB
+  POST /admin/jobs/rebuild       — kick off a rebuild (subset of stages)
+  GET  /admin/jobs/{id}          — current status + accumulated log
+  GET  /admin/jobs/{id}/stream   — SSE stream of new log lines
 
 Rules:
   - Secrets never travel through these routes. The body of a POST may
@@ -232,6 +235,205 @@ def test_db(req: _DbTestRequest) -> _DbTestResponse:
     except Exception as e:
         return _DbTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
                                elapsed_ms=(time.perf_counter() - t0) * 1000.0)
+
+
+# ── Rebuild orchestrator (in-process job runner + SSE log) ──────────────────
+
+
+import asyncio
+import shlex
+import subprocess
+import threading
+import time
+import uuid
+from collections import deque
+
+from fastapi.responses import StreamingResponse
+
+
+# Stage name → CLI command. Each stage runs the same `text2sql` subcommand
+# the operator would run by hand, so the orchestrator never duplicates stage
+# logic.
+_STAGE_COMMANDS: dict[str, list[str]] = {
+    "ingest":              ["text2sql", "ingest"],
+    "classify":            ["text2sql", "map-tables-cmd"],
+    "graph":               ["text2sql", "build-fk-graph"],
+    "catalog":             ["text2sql", "build-table-catalog-cmd"],
+    "index":               ["text2sql", "index-catalog"],
+    "gold-seed":           ["text2sql", "gold-seed"],
+}
+
+
+class _Job:
+    """Append-only log + status for one rebuild run.
+
+    Lives in process memory; not durable across restarts. Frontend polls
+    /admin/jobs/{id} for status or subscribes to the SSE stream for live
+    log tailing.
+    """
+
+    def __init__(self, stages: list[str]) -> None:
+        self.id = uuid.uuid4().hex
+        self.stages = stages
+        self.created_at = time.time()
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.status: str = "pending"      # pending | running | succeeded | failed | cancelled
+        self.current_stage: str | None = None
+        self.exit_code: int | None = None
+        self._lines: deque[str] = deque(maxlen=10_000)
+        # Each subscriber gets its own asyncio.Queue; new lines fan out.
+        self._subscribers: list[asyncio.Queue[str]] = []
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def append(self, line: str) -> None:
+        with self._lock:
+            self._lines.append(line)
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait(line)
+                except Exception:
+                    pass
+
+    def subscribe(self) -> asyncio.Queue[str]:
+        q: asyncio.Queue[str] = asyncio.Queue()
+        # Replay everything we have so subscribers never miss earlier output.
+        for line in list(self._lines):
+            q.put_nowait(line)
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue[str]) -> None:
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def to_status(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "stages": self.stages,
+            "current_stage": self.current_stage,
+            "exit_code": self.exit_code,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "log_tail": list(self._lines)[-200:],
+        }
+
+
+_JOBS: dict[str, _Job] = {}
+
+
+def _run_job(job: _Job, env: dict[str, str]) -> None:
+    """Run each stage in sequence. Streams stdout+stderr line-by-line into
+    job._lines so subscribers see output as it happens.
+    """
+    job.status = "running"
+    job.started_at = time.time()
+    overall_rc = 0
+    try:
+        for stage in job.stages:
+            cmd = _STAGE_COMMANDS.get(stage)
+            if cmd is None:
+                job.append(f"[orchestrator] unknown stage: {stage}; skipping")
+                continue
+            job.current_stage = stage
+            job.append(f"\n[stage] ──────── {stage} ──────── ({shlex.join(cmd)})\n")
+            proc = subprocess.Popen(
+                cmd, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=1, text=True,
+            )
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                job.append(raw.rstrip("\n"))
+            rc = proc.wait()
+            job.append(f"[stage] {stage} exit={rc}")
+            if rc != 0:
+                overall_rc = rc
+                job.append(f"[orchestrator] stage {stage} failed; aborting subsequent stages")
+                break
+        job.exit_code = overall_rc
+        job.status = "succeeded" if overall_rc == 0 else "failed"
+    except Exception as e:
+        job.append(f"[orchestrator] crashed: {type(e).__name__}: {e}")
+        job.exit_code = -1
+        job.status = "failed"
+    finally:
+        job.current_stage = None
+        job.finished_at = time.time()
+
+
+class _RebuildRequest(BaseModel):
+    stages: list[str] = Field(default_factory=lambda: list(_STAGE_COMMANDS.keys()))
+
+
+@router.post("/jobs/rebuild")
+def post_rebuild(req: _RebuildRequest) -> dict[str, Any]:
+    """Kick off a background rebuild. Returns the job id immediately;
+    follow up with GET /admin/jobs/{id} or /admin/jobs/{id}/stream."""
+    invalid = [s for s in req.stages if s not in _STAGE_COMMANDS]
+    if invalid:
+        raise HTTPException(400, f"unknown stage(s): {invalid}; "
+                                  f"valid={list(_STAGE_COMMANDS)}")
+    if not req.stages:
+        raise HTTPException(400, "empty stages list")
+    job = _Job(req.stages)
+    _JOBS[job.id] = job
+    # Pass the parent's env to the subprocess so credentials / TARGET_DB / etc.
+    # are inherited.
+    env = dict(os.environ)
+    job._thread = threading.Thread(target=_run_job, args=(job, env), daemon=True)
+    job._thread.start()
+    return job.to_status()
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, Any]:
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return job.to_status()
+
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_job(job_id: str) -> StreamingResponse:
+    """Server-Sent Events: each new log line emitted as `data: <line>\\n\\n`.
+    Closes when the job reaches a terminal state."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+
+    async def _gen():
+        q = job.subscribe()
+        try:
+            # Frame format identical to /chat/stream so the frontend can
+            # reuse the same SSE plumbing.
+            yield f"data: {json.dumps({'type': 'status', **job.to_status()})}\n\n"
+            while True:
+                # Heartbeat every ~5s so dropped connections fail fast.
+                try:
+                    line = await asyncio.wait_for(q.get(), timeout=5.0)
+                    yield f"data: {json.dumps({'type': 'line', 'line': line})}\n\n"
+                except asyncio.TimeoutError:
+                    yield ":heartbeat\n\n"
+                if job.status in ("succeeded", "failed", "cancelled"):
+                    # Drain anything in the queue, then send final status.
+                    while not q.empty():
+                        line = q.get_nowait()
+                        yield f"data: {json.dumps({'type': 'line', 'line': line})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', **job.to_status()})}\n\n"
+                    return
+        finally:
+            job.unsubscribe(q)
+
+    return StreamingResponse(
+        _gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/test_metadata_db", response_model=_DbTestResponse)
