@@ -26,12 +26,19 @@ this README is the operator quickstart.
   validate + repair → execute → Vega-Lite + NL summary.
 - **`/chat`** — agentic, multi-turn, streaming. The LLM drives the same
   components as tools, with token-by-token SSE streaming, conversation
-  persistence, and automatic post-process viz/description.
+  persistence, and automatic post-process viz/description. Works with
+  both OpenAI-shape providers (Azure / OpenAI direct) and Anthropic-shape
+  providers via a built-in tools translator.
+- **`/settings`** — three connector forms (Database, LLM, Embedding):
+  pick a kind, fill in credentials, **Test** the connection, **Save** to
+  register the provider and (optionally) make it primary. Plus a Rebuild
+  panel that runs any subset of build stages with a live log stream. No
+  YAML editing required at runtime.
 - **Eval harness** — 6 metrics (schema-linking recall, join-path exactness,
   SQL syntactic validity, execution accuracy, descriptor leakage, latency
   p50/p95/p99) with markdown + JSON reports and a regression gate.
 - **Provider abstraction** — swap LLM / embedder / vector store / target DB
-  via YAML, no code changes.
+  via YAML, env vars, or the Settings UI; no code changes.
 
 ---
 
@@ -174,25 +181,26 @@ Different vendors expose different capabilities. The platform queries
 `llm.capabilities.X` at startup and either dispatches to a code path the
 provider supports or fails fast with an actionable error. Today:
 
-| provider | strict JSON schema | token streaming | OpenAI tool calling (`/chat`) | Anthropic tool_use |
+| provider | strict JSON schema | token streaming | OpenAI tool calling (`/chat`) | Anthropic tool_use (`/chat` via translator) |
 |---|---|---|---|---|
 | `azure_openai` | ✅ | ✅ | ✅ | ❌ |
 | `openai` | ✅ | ✅ | ✅ | ❌ |
-| `anthropic` | ⚠ soft (instruction; strict tool_use upgrade pending) | ✅ | ❌ | ✅ |
-| `openrouter` | conditional per model (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1*` strict; others soft) | ✅ | ❌ (translator pending) | ❌ |
-| `bedrock` | ⚠ soft (Converse-API + tool_use upgrade pending) | ❌ (one-shot today; ConverseStream pending) | ❌ | ✅ |
+| `anthropic` | ✅ via native `tool_use` (strict=true) | ✅ | ❌ | ✅ |
+| `openrouter` | ✅ runtime probe + cache (auto-discovers per-model support, falls back to instruction) | ✅ | ❌ | ❌ |
+| `bedrock` | ✅ via Converse `toolUse` | ✅ via `ConverseStream` | ❌ | ✅ |
 
 What this means for picking a primary:
 
-- **Default Azure / OpenAI works everywhere.** `/query`, `/chat`, all
-  per-task slots.
-- **Anthropic / OpenRouter / Bedrock work for `/query`.** They cannot drive
-  `/chat` today because the agent loop uses OpenAI-shape tool-calling; the
-  translator that lets Anthropic + Bedrock drive `/chat` is a planned
-  follow-up.
-- **Soft-schema providers** can drive `sql_generation` — the repair loop
-  catches the occasional malformed JSON — but you'll see startup warnings
-  encouraging you to use a strict provider in production.
+- **Azure / OpenAI / Anthropic** work for both `/query` AND `/chat`. The
+  agent loop has a built-in OpenAI ↔ Anthropic tools translator so a
+  Claude direct API key drives `/chat` with the same SSE streaming, tool
+  registry, and post-process viz path as Azure.
+- **OpenRouter and Bedrock** drive `/query` today. `/chat` for these is a
+  short follow-on (Bedrock-Anthropic plugs into the same translator;
+  OpenRouter-Anthropic does too).
+- **All five providers honor `sql_generation` strict-schema** now — no
+  more "soft instruction" warnings at startup. The repair loop is still
+  there as a backstop.
 
 #### Vendor-specific gotchas
 
@@ -200,9 +208,11 @@ What this means for picking a primary:
   `parallel_tool_calls=False` is required (the platform sets this defensively).
 - **Anthropic**: tool_use system prompt costs ~313–346 tokens per request
   on Opus/Sonnet 4.5+; budget `max_tokens` accordingly.
-- **OpenRouter**: per-model behavior varies. The provider knows which models
-  honor strict JSON via a conservative pinned list; others fall back to
-  instruction-only.
+- **OpenRouter**: per-model strict-schema support is auto-discovered. The
+  first call to a new model with `schema=…` tries strict; on the
+  documented "unsupported" error it caches a negative in
+  `data/artifacts/.openrouter_strict_cache.json` (1-week TTL) and falls
+  back to instruction-only on subsequent calls.
 - **Bedrock**: API keys are **region-locked** (each key works only in the
   region it was created in). Cross-region inference profiles like
   `global.anthropic.claude-opus-4-5` need a key generated in the profile's
@@ -299,6 +309,59 @@ Pick via the `TARGET_DB` env var:
 ### Metadata DB (gold store + conversation history)
 
 Always Postgres. Configured under `metadata_db:` in YAML.
+
+---
+
+## Configuration via the Settings UI (`/settings`)
+
+You can also configure everything from the browser. The Settings page
+exposes three connector forms — Database, LLM, Embedding — plus a
+Rebuild panel.
+
+**How it works:**
+
+1. **Pick a kind** (Postgres / MSSQL · Azure OpenAI / OpenAI / Anthropic
+   / OpenRouter / Bedrock · sentence-transformers / Azure / OpenAI /
+   Bedrock).
+2. **Fill in the typed fields** — host/port/database/user/password,
+   endpoint+api_version+deployment+key, model+device, etc. Different
+   fields show up depending on the kind.
+3. **Click Test connection** — the server runs a real ping (`SELECT 1` +
+   server version probe for DBs; `complete("PONG")` for LLMs;
+   `embed(["smoke test"])` for embeddings). You see the latency and a
+   sample of the result before you save anything.
+4. **Click Save** — the provider gets registered in
+   `data/artifacts/runtime_overrides.json` (gitignored), the credential
+   is written to `data/artifacts/runtime_secrets.json` (mode 0600,
+   gitignored), and (if the toggle is on) the provider is set as the
+   primary for that section.
+
+**Resolution order at boot** — `load_config()` merges in this order
+(later wins): YAML defaults → `runtime_overrides.json` → `.env` →
+process env. So the UI never edits YAML and never edits `.env`; it just
+adds an overlay on top.
+
+**Rebuild panel** — checkbox per stage (ingest, classify, graph,
+catalog, index, gold-seed) → click **Run N stages** → output streams
+back as Server-Sent Events into a terminal-style pane in the browser.
+Each stage spawns the same `text2sql <subcommand>` an operator would
+run by hand, so the orchestrator never duplicates stage logic.
+
+**Admin API** (used by the Settings page; available for scripting):
+
+| route | what |
+|---|---|
+| `GET  /admin/config` | resolved config, secrets redacted, env_present map |
+| `POST /admin/config` | overlay write-through (deep-merge, validates before persisting) |
+| `POST /admin/connector/database/test` | live-ping a DB form payload |
+| `POST /admin/connector/database`      | register + (optionally) set primary |
+| `POST /admin/connector/llm/test`      | call `complete("PONG")` against a form payload |
+| `POST /admin/connector/llm`           | register + (optionally) set primary |
+| `POST /admin/connector/embedding/test`| run `embed(...)` against a form payload |
+| `POST /admin/connector/embedding`     | register + (optionally) set primary |
+| `POST /admin/test_db` / `POST /admin/test_metadata_db` | smoke an existing provider by name |
+| `POST /admin/jobs/rebuild`            | start an ingest/classify/graph/catalog/index/gold-seed run |
+| `GET  /admin/jobs/{id}` / `GET /admin/jobs/{id}/stream` | poll status / SSE log |
 
 ---
 
@@ -586,6 +649,10 @@ has the matching client-side env.
 | `GET /conversations` | list past chats |
 | `GET /conversations/{id}` | full message history |
 | `DELETE /conversations/{id}` | delete |
+| `GET  /admin/config` / `POST /admin/config` | resolved config / overlay write-through |
+| `POST /admin/connector/{database,llm,embedding}` | register a new provider via form |
+| `POST /admin/connector/{database,llm,embedding}/test` | live ping a form payload |
+| `POST /admin/jobs/rebuild` / `GET /admin/jobs/{id}` / `GET /admin/jobs/{id}/stream` | rebuild orchestrator |
 
 The frontend uses `/api/*` which Next.js rewrites to `127.0.0.1:8011`.
 
@@ -624,6 +691,10 @@ effect, then promotes drafts to finalized steps when `step` arrives.
 | Gold-SQL store | Postgres `text2sql_meta` schema |
 | Conversation history | Postgres `text2sql_meta.conversation` + `conversation_message` |
 | Vector index | local FAISS in `data/artifacts/vector/` |
+| Runtime overrides (Settings UI writes) | `data/artifacts/runtime_overrides.json` (gitignored) |
+| Runtime secrets (Settings UI writes) | `data/artifacts/runtime_secrets.json` (gitignored, chmod 0600) |
+| OpenRouter strict-schema probe cache | `data/artifacts/.openrouter_strict_cache.json` (gitignored) |
+| Conversation history | Postgres `text2sql_meta.conversation` + `conversation_message` |
 
 Wipe everything safe to rebuild: `rm -rf data/edfi data/artifacts && make build`.
 
@@ -662,12 +733,30 @@ API, eval harness.
   via `GET /conversations/{id}`; usually means `find_similar_queries`
   returned no relevant gold examples for that question shape — add one to
   the gold store and re-seed.
-- **"agent loop currently supports azure_openai or openai LLMs"** — the
-  primary LLM under task `sql_generation` must be one of those for
-  tool-calling. Anthropic + OpenRouter are supported by `/query` but not
-  `/chat`.
+- **"The /chat agent loop requires an LLM with openai_tool_calling or
+  anthropic_tool_use capability"** — the primary LLM under task
+  `sql_generation` must be one of: `azure_openai`, `openai`,
+  `anthropic`. The first two run natively; Anthropic runs through the
+  built-in OpenAI ↔ Anthropic tools translator in the agent loop.
+  OpenRouter and Bedrock drive `/query` but cannot drive `/chat` yet
+  (Bedrock-Anthropic plugs into the same translator in a follow-on).
 - **Cluster IDs change across rebuilds** — Hungarian assignment in
   `classification/subcluster.py` keeps them stable when overlap > 70%.
+- **Settings UI: "Validation failed: max_tokens: ..." after clearing a
+  field** — the form sent JSON `null` for that numeric input. Just type
+  any value (e.g. 4096) and try again. The backend tolerates `null`
+  for `max_tokens` / `dim` / `batch_size` / `temperature`.
+- **Settings UI: "connector failed validation: <pydantic error>"** —
+  the proposed overlay would have made `load_config()` fail (e.g. you
+  set `primary` to a provider that isn't in the providers map). The
+  overlay is rolled back; the credential is also rolled back from
+  `runtime_secrets.json`. Fix the form and re-Save.
+- **Settings UI: changes don't take effect after Save** — restart the
+  API process. Some component handles (FAISS index, sentence-transformer
+  weights, the agent runner's LLM client) are constructed at startup;
+  changing the embedding primary requires re-running `index-catalog`
+  before `/query` and `/chat` can use the new vectors. The Rebuild
+  panel in the Settings page can do this for you.
 
 ---
 
