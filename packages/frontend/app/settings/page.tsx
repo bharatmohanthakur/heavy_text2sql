@@ -3,19 +3,24 @@
 import { useEffect, useState } from "react";
 import { AdminConfig, DbTestResult, ProviderEntry, api } from "@/lib/api";
 
-/* Settings page — read-only viewer of the resolved runtime config.
- * Editor cards (LLM routing, embedding switcher) land in K3.
+/* Settings page — view + edit the resolved runtime config.
  *
- * The page is one column of cards. Each card shows the section's primary
- * provider, the full list of registered providers (one row each), with
- * a green/red dot signaling whether the credential env var that provider
- * needs is actually populated. The two DB cards have a "Test connection"
- * button that pings the live DB. */
+ * Each card shows the section's primary, the registered providers, and
+ * (where applicable) inline editors that POST a partial overlay to
+ * /admin/config. Secret credentials never leave .env; the UI only
+ * changes selectors (which provider is primary, which task routes
+ * where, etc.).
+ *
+ * Switching the embedding primary surfaces a re-index banner when the
+ * new provider has a different output dimension than the current FAISS
+ * index — the index built for one dim cannot serve queries from another. */
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<AdminConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tests, setTests] = useState<Record<string, DbTestResult & { provider: string; pending?: boolean }>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     api.adminConfig().then(setConfig).catch((e) => setError(String(e)));
@@ -49,15 +54,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function patch(partial: Partial<AdminConfig>) {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const next = await api.adminPatchConfig(partial);
+      setConfig(next);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-xl font-semibold text-accent">Settings</h1>
         <p className="text-sm text-muted mt-1">
-          Resolved runtime configuration. Read-only for now — editing comes next.
-          Secrets stay in <code className="text-accent">.env</code>; everything else
-          lives in <code className="text-accent">{config.overlay_path}</code>.
+          Resolved runtime configuration. Edits persist to{" "}
+          <code className="text-accent">{config.overlay_path}</code>; secrets
+          stay in <code className="text-accent">.env</code> and are never
+          written by the UI.
         </p>
+        <div className="mt-2 text-xs h-4">
+          {saving && <span className="text-muted">Saving…</span>}
+          {!saving && saveError && (
+            <span className="text-red-400">Save failed: {saveError}</span>
+          )}
+        </div>
       </header>
 
       <Card title="Target Database" subtitle="The populated ODS the platform queries.">
@@ -97,24 +122,47 @@ export default function SettingsPage() {
       </Card>
 
       <Card title="LLM" subtitle="Primary + per-task routing. Each task slot picks one provider.">
-        <div className="text-sm mb-2">
-          <span className="text-muted">primary:</span>{" "}
-          <span className="text-accent font-mono">{config.llm.primary}</span>
+        <div className="text-sm mb-3 flex flex-wrap gap-x-6 gap-y-2 items-center">
+          <span>
+            <span className="text-muted">primary:</span>{" "}
+            <ProviderSelect
+              providers={config.llm.providers}
+              value={config.llm.primary}
+              disabled={saving}
+              onChange={(v) => patch({ llm: { primary: v } as never })}
+            />
+          </span>
           {config.llm.fallback && (
-            <span className="ml-4">
+            <span>
               <span className="text-muted">fallback:</span>{" "}
-              <span className="text-accent font-mono">{config.llm.fallback}</span>
+              <ProviderSelect
+                providers={config.llm.providers}
+                value={config.llm.fallback}
+                disabled={saving}
+                onChange={(v) => patch({ llm: { fallback: v } as never })}
+              />
             </span>
           )}
         </div>
 
         <div className="mb-4">
           <div className="text-xs text-muted uppercase tracking-wide mb-1">Task routing</div>
-          <div className="border border-border rounded p-2 bg-panel font-mono text-xs space-y-1">
+          <div className="border border-border rounded p-3 bg-panel space-y-2">
             {Object.entries(config.llm.task_routing).map(([task, provider]) => (
-              <div key={task} className="flex">
-                <span className="w-44 text-muted">{task}:</span>
-                <span className="text-accent">{provider}</span>
+              <div key={task} className="flex items-center gap-3 text-xs">
+                <span className="w-44 text-muted font-mono">{task}</span>
+                <ProviderSelect
+                  providers={config.llm.providers}
+                  value={provider}
+                  disabled={saving}
+                  onChange={(v) =>
+                    patch({
+                      llm: {
+                        task_routing: { ...config.llm.task_routing, [task]: v },
+                      } as never,
+                    })
+                  }
+                />
               </div>
             ))}
           </div>
@@ -129,13 +177,40 @@ export default function SettingsPage() {
       </Card>
 
       <Card title="Embedding" subtitle="Vectors used by the table retriever, gold few-shots, and entity resolver Tier 3.">
-        <div className="text-sm mb-2">
-          <span className="text-muted">primary:</span>{" "}
-          <span className="text-accent font-mono">{config.embeddings.primary}</span>
+        {(() => {
+          const currentDim = (config.embeddings.providers[config.embeddings.primary]?.dim as number | undefined) ?? null;
+          // We can't directly query the on-disk FAISS dim from here, but
+          // any change to `primary` whose dim differs from the current
+          // primary's dim is, by construction, a re-index trigger. Show
+          // a banner whenever the overlay carries an embeddings.primary
+          // override (i.e. the user just changed it).
+          const overlayPrimary = (config.overlay as { embeddings?: { primary?: string } })?.embeddings?.primary;
+          const overlayDim = overlayPrimary ? (config.embeddings.providers[overlayPrimary]?.dim as number | undefined) ?? null : null;
+          const dimChanged = overlayPrimary && overlayDim != null && currentDim != null && overlayDim !== currentDim;
+          if (dimChanged) {
+            return (
+              <div className="mb-3 border border-yellow-500/50 bg-yellow-500/10 rounded p-3 text-xs text-yellow-300">
+                ⚠ Embedding dim changed ({String(overlayDim)} ≠ previously indexed). The FAISS
+                index needs rebuilding before /query and /chat can use the new vectors —
+                run <code className="text-yellow-100">text2sql index-catalog</code> from the
+                CLI, or wait for the rebuild orchestrator panel (K4).
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        <div className="text-sm mb-3 flex items-center gap-3">
+          <span className="text-muted">primary:</span>
+          <ProviderSelect
+            providers={config.embeddings.providers}
+            value={config.embeddings.primary}
+            disabled={saving}
+            onChange={(v) => patch({ embeddings: { primary: v } as never })}
+          />
           {(() => {
-            const p = config.embeddings.providers[config.embeddings.primary];
-            const dim = p?.dim;
-            return dim ? <span className="ml-4 text-muted">dim: <span className="text-accent">{String(dim)}</span></span> : null;
+            const dim = config.embeddings.providers[config.embeddings.primary]?.dim;
+            return dim ? <span className="text-xs text-muted">dim: <span className="text-accent">{String(dim)}</span></span> : null;
           })()}
         </div>
         <ProviderTable
@@ -237,6 +312,31 @@ function ProviderTable({
         );
       })}
     </div>
+  );
+}
+
+function ProviderSelect({
+  providers,
+  value,
+  disabled,
+  onChange,
+}: {
+  providers: Record<string, ProviderEntry>;
+  value: string;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className="border border-border bg-panel rounded px-2 py-0.5 text-xs font-mono text-accent focus:outline-none focus:border-accent disabled:opacity-50"
+    >
+      {Object.keys(providers).map((name) => (
+        <option key={name} value={name}>{name}</option>
+      ))}
+    </select>
   );
 }
 
