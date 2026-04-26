@@ -12,17 +12,22 @@ from text2sql.providers.base import LLMCapabilities, LLMMessage, LLMProvider
 from text2sql.providers.factory import _resolve_secret, register_llm
 
 
-# Step E will flip strict_json_schema=True after switching to native tool_use
-# with strict=true. Until then this provider uses a soft-instruction
-# fallback that the model usually but not always honors.
-# anthropic_tool_use is True — Anthropic supports tool_use natively; the
-# agent-loop translator (Step H) will dispatch via this flag.
+# Anthropic supports server-enforced strict schema via tool_use blocks
+# (per docs.anthropic.com — "Add `strict: true` to your tool definitions
+# to ensure Claude's tool calls always match your schema exactly"). When
+# the caller passes `schema=...`, we surface it as a single tool named
+# `structured_response` with strict=true and tool_choice forcing it.
+# anthropic_tool_use=True — the agent-loop translator (Step H) will
+# dispatch via this flag.
 _ANTHROPIC_CAPS = LLMCapabilities(
-    strict_json_schema=False,
+    strict_json_schema=True,
     token_streaming=True,
     openai_tool_calling=False,
     anthropic_tool_use=True,
 )
+
+
+_STRUCTURED_TOOL_NAME = "structured_response"
 
 
 class AnthropicLLM(LLMProvider):
@@ -55,21 +60,34 @@ class AnthropicLLM(LLMProvider):
             {"role": m.role, "content": m.content}
             for m in messages if m.role in ("user", "assistant")
         ]
-        # Schema-constrained output: nudge the model with an explicit instruction
-        # since Anthropic's tool-use surface is heavier than Azure's strict mode.
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "system": system,
+            "messages": chat,
+            "temperature": self._default_temperature if temperature is None else temperature,
+            "max_tokens": max_tokens or self._default_max_tokens,
+        }
         if schema is not None:
-            system = (
-                (system + "\n\n" if system else "")
-                + "Reply with JSON only matching this JSON-Schema:\n"
-                + json.dumps(schema)
-            )
-        resp = self._client.messages.create(
-            model=self._model,
-            system=system,
-            messages=chat,
-            temperature=self._default_temperature if temperature is None else temperature,
-            max_tokens=max_tokens or self._default_max_tokens,
-        )
+            # Server-enforced strict-schema via tool_use. Force the model to
+            # emit exactly one tool call against `structured_response`; the
+            # tool's input is guaranteed to match `input_schema` byte-for-byte
+            # (with strict=true). Return the JSON-serialized input — callers
+            # already json.loads(complete(...)) downstream.
+            kwargs["tools"] = [{
+                "name": _STRUCTURED_TOOL_NAME,
+                "description": "Return the structured response.",
+                "input_schema": schema,
+                "strict": True,
+            }]
+            kwargs["tool_choice"] = {"type": "tool", "name": _STRUCTURED_TOOL_NAME}
+        resp = self._client.messages.create(**kwargs)
+        if schema is not None:
+            for block in resp.content:
+                if getattr(block, "type", None) == "tool_use" and block.name == _STRUCTURED_TOOL_NAME:
+                    return json.dumps(block.input)
+            # Fallback if the SDK or model behaved unexpectedly: surface text
+            # so the caller's json.loads will raise a useful error.
+            return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
         return "".join(block.text for block in resp.content if block.type == "text")
 
     def stream(self, messages: list[LLMMessage]) -> Iterator[str]:
