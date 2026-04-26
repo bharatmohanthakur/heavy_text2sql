@@ -153,10 +153,24 @@ class ConversationStore:
         )
 
     def ensure_schema(self) -> None:
+        """Create only the conversation tables. Idempotent."""
         _Base.metadata.create_all(self._engine)
 
     def drop_schema(self) -> None:
-        _Base.metadata.drop_all(self._engine)
+        """Drop ONLY the conversation tables (`conversation`,
+        `conversation_message`).
+
+        SQLAlchemy `_Base.metadata.drop_all` is already scoped to tables
+        registered against this module's `_Base`, but we keep the call
+        local-only by spelling out which tables are owned here. Other
+        artifacts in the metadata DB (e.g. `gold_sql` from
+        text2sql.gold.GoldStore) belong to different DeclarativeBases
+        and are unaffected.
+        """
+        _Base.metadata.drop_all(
+            self._engine,
+            tables=[ConversationMessageRow.__table__, ConversationRow.__table__],
+        )
 
     # ── Conversation CRUD ────────────────────────────────────────────────────
 

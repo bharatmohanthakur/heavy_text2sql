@@ -93,6 +93,10 @@ def ctx() -> ToolContext:
             f"@{spec['host']}:{spec['port']}/{spec['database']}"
         )
         gold_store = GoldStore(sa_url, embedder, catalog=catalog)
+        # Defensive: another test suite (component7) might have torn down
+        # the schema. Idempotent ensure_schema fixes that without disturbing
+        # any rows the operator seeded via `text2sql gold-seed`.
+        gold_store.ensure_schema()
     except Exception:
         pass
 
@@ -218,8 +222,15 @@ def test_find_join_path_rejects_singleton(ctx: ToolContext, reg) -> None:
 
 
 def test_find_similar_queries_returns_examples(ctx: ToolContext, reg) -> None:
-    if ctx.gold_store is None or ctx.gold_store.count() == 0:
-        pytest.skip("gold store empty — run text2sql gold-seed first")
+    if ctx.gold_store is None:
+        pytest.skip("gold store not configured")
+    try:
+        if ctx.gold_store.count() == 0:
+            pytest.skip("gold store empty — run text2sql gold-seed first")
+    except Exception as e:
+        # gold_sql table missing (e.g. torn down by another suite) — skip
+        # cleanly rather than blow up the whole agent_tools suite.
+        pytest.skip(f"gold store unavailable: {e}")
     out = reg.execute(
         "find_similar_queries",
         {"question": "How many students enrolled in each school?", "k": 2, "domains": []},

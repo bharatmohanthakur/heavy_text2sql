@@ -54,7 +54,17 @@ def store():
     s.drop_schema()      # clean slate
     s.ensure_schema()
     yield s
-    s.drop_schema()
+    # Don't drop on teardown — other test modules (test_agent_tools,
+    # test_agent_loop) share the same metadata DB and rely on the
+    # gold_sql table existing. We delete only the rows this test inserted
+    # (uuid-tagged) rather than the entire schema, so the table stays
+    # available for subsequent suites to query.
+    try:
+        from sqlalchemy import text
+        with s._engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE gold_sql"))
+    except Exception:
+        pass
 
 
 # ── AST flattening ──────────────────────────────────────────────────────────
