@@ -66,6 +66,14 @@ class Text2SqlPipeline:
         gold_store: GoldStore | None,
         sql_engine: SqlEngine,
         llm: LLMProvider,
+        # Optional per-task LLMs. If None, the pipeline falls back to `llm`,
+        # so existing call-sites keep working — but the canonical wiring in
+        # cli._build_pipeline now passes distinct providers per task slot
+        # (repair_loop, visualization, description) so the YAML task_routing
+        # is actually honored.
+        repair_llm: LLMProvider | None = None,
+        viz_llm: LLMProvider | None = None,
+        description_llm: LLMProvider | None = None,
         dialect: str | None = None,
         max_repair_attempts: int = 3,
     ) -> None:
@@ -77,6 +85,20 @@ class Text2SqlPipeline:
         self.gold_store = gold_store
         self.sql_engine = sql_engine
         self.llm = llm
+        # Capability check: SQL generation depends on strict JSON schema for
+        # the {sql, rationale} envelope. Soft-schema providers usually
+        # comply but occasionally drift; the repair loop catches it but
+        # the user should be aware.
+        caps = getattr(llm, "capabilities", None)
+        if caps is not None and not caps.strict_json_schema:
+            log.warning(
+                "sql_generation routed to %s which lacks strict_json_schema "
+                "capability. The repair loop will catch occasional malformed "
+                "JSON, but for production prefer a strict-schema provider "
+                "(azure_openai or openai today; anthropic and bedrock after "
+                "their tool_use upgrades land).",
+                getattr(llm, "model_id", "<unknown>"),
+            )
         self.dialect = dialect or sql_engine.dialect
         # Filter the catalog down to tables/columns that actually exist in the
         # live DB. Catalog metadata may reflect a newer DS version than the
@@ -88,10 +110,13 @@ class Text2SqlPipeline:
             self.catalog = catalog
         self.context_builder = ContextBuilder(catalog=self.catalog, dialect=self.dialect)
         self.repair = RepairLoop(
-            llm=llm, sql_engine=sql_engine,
+            llm=repair_llm or llm, sql_engine=sql_engine,
             max_attempts=max_repair_attempts, dialect=self.dialect,
         )
-        self.viz_describer = VizDescriber(llm=llm)
+        self.viz_describer = VizDescriber(
+            llm=viz_llm or llm,
+            description_llm=description_llm or viz_llm or llm,
+        )
 
     # ── Public entry point ────────────────────────────────────────────────────
 

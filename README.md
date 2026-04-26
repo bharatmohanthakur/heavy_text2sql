@@ -168,6 +168,47 @@ llm:
 > `azure_openai` or `openai` provider. The pipeline (`/query`) accepts any
 > provider that implements the `LLMProvider` protocol.
 
+### LLM capability matrix (which provider works with which entry point)
+
+Different vendors expose different capabilities. The platform queries
+`llm.capabilities.X` at startup and either dispatches to a code path the
+provider supports or fails fast with an actionable error. Today:
+
+| provider | strict JSON schema | token streaming | OpenAI tool calling (`/chat`) | Anthropic tool_use |
+|---|---|---|---|---|
+| `azure_openai` | ✅ | ✅ | ✅ | ❌ |
+| `openai` | ✅ | ✅ | ✅ | ❌ |
+| `anthropic` | ⚠ soft (instruction; strict tool_use upgrade pending) | ✅ | ❌ | ✅ |
+| `openrouter` | conditional per model (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1*` strict; others soft) | ✅ | ❌ (translator pending) | ❌ |
+| `bedrock` | ⚠ soft (Converse-API + tool_use upgrade pending) | ❌ (one-shot today; ConverseStream pending) | ❌ | ✅ |
+
+What this means for picking a primary:
+
+- **Default Azure / OpenAI works everywhere.** `/query`, `/chat`, all
+  per-task slots.
+- **Anthropic / OpenRouter / Bedrock work for `/query`.** They cannot drive
+  `/chat` today because the agent loop uses OpenAI-shape tool-calling; the
+  translator that lets Anthropic + Bedrock drive `/chat` is a planned
+  follow-up.
+- **Soft-schema providers** can drive `sql_generation` — the repair loop
+  catches the occasional malformed JSON — but you'll see startup warnings
+  encouraging you to use a strict provider in production.
+
+#### Vendor-specific gotchas
+
+- **Azure / OpenAI**: when combining strict structured outputs with `tools=[...]`,
+  `parallel_tool_calls=False` is required (the platform sets this defensively).
+- **Anthropic**: tool_use system prompt costs ~313–346 tokens per request
+  on Opus/Sonnet 4.5+; budget `max_tokens` accordingly.
+- **OpenRouter**: per-model behavior varies. The provider knows which models
+  honor strict JSON via a conservative pinned list; others fall back to
+  instruction-only.
+- **Bedrock**: API keys are **region-locked** (each key works only in the
+  region it was created in). Cross-region inference profiles like
+  `global.anthropic.claude-opus-4-5` need a key generated in the profile's
+  home region, otherwise calls return 403 *"Authentication failed: Please
+  make sure your API Key is valid."* even when the key itself is valid.
+
 ### Embedding providers
 
 | name | kind | dim | runs locally? |

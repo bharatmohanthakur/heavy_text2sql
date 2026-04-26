@@ -249,9 +249,23 @@ class _LLMClient:
             self._client = OpenAI(api_key=os.environ[cfg["api_key_env"]])
             self._model = cfg["model"]
         else:
+            # Capability-grounded fail-fast. The agent loop drives the LLM
+            # via OpenAI-shape tool-calling; providers without that
+            # capability cannot be the /chat backend until the Step H
+            # translator lands. Tell the user exactly which YAML key to
+            # edit instead of crashing mid-request.
             raise ValueError(
-                f"agent loop currently supports azure_openai or openai LLMs; "
-                f"got {self._kind!r}"
+                f"The /chat agent loop requires an LLM with "
+                f"openai_tool_calling capability. The provider configured "
+                f"for `llm.task_routing.sql_generation` is kind={self._kind!r}, "
+                f"which does not (yet) support OpenAI-shape tool calls.\n\n"
+                f"Either:\n"
+                f"  1. Edit configs/default.yaml — set "
+                f"llm.task_routing.sql_generation to a provider with kind "
+                f"'azure_openai' or 'openai' (currently the only kinds that "
+                f"support OpenAI-shape tool calls).\n"
+                f"  2. Use /query (the canonical pipeline) — it works with "
+                f"all 5 LLM providers."
             )
 
     def stream_chat(

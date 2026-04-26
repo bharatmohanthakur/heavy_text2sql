@@ -8,8 +8,21 @@ from typing import Any, Iterator
 from anthropic import Anthropic
 
 from text2sql.config import ProviderEntry
-from text2sql.providers.base import LLMMessage, LLMProvider
+from text2sql.providers.base import LLMCapabilities, LLMMessage, LLMProvider
 from text2sql.providers.factory import _resolve_secret, register_llm
+
+
+# Step E will flip strict_json_schema=True after switching to native tool_use
+# with strict=true. Until then this provider uses a soft-instruction
+# fallback that the model usually but not always honors.
+# anthropic_tool_use is True — Anthropic supports tool_use natively; the
+# agent-loop translator (Step H) will dispatch via this flag.
+_ANTHROPIC_CAPS = LLMCapabilities(
+    strict_json_schema=False,
+    token_streaming=True,
+    openai_tool_calling=False,
+    anthropic_tool_use=True,
+)
 
 
 class AnthropicLLM(LLMProvider):
@@ -23,6 +36,10 @@ class AnthropicLLM(LLMProvider):
     @property
     def model_id(self) -> str:
         return f"anthropic:{self._model}"
+
+    @property
+    def capabilities(self) -> LLMCapabilities:
+        return _ANTHROPIC_CAPS
 
     def complete(
         self,

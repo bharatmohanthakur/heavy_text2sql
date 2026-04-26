@@ -17,7 +17,7 @@ from typing import Any, Iterator
 from openai import OpenAI
 
 from text2sql.config import ProviderEntry
-from text2sql.providers.base import LLMMessage, LLMProvider
+from text2sql.providers.base import LLMCapabilities, LLMMessage, LLMProvider
 from text2sql.providers.factory import _resolve_secret, register_llm
 
 
@@ -64,6 +64,22 @@ class OpenRouterLLM(LLMProvider):
     @property
     def model_id(self) -> str:
         return f"openrouter:{self._model}"
+
+    @property
+    def capabilities(self) -> LLMCapabilities:
+        # strict_json_schema is conservatively True only for the pinned
+        # allow-list of OpenAI-family models known to honor strict mode on
+        # OpenRouter. Step I will replace this with a runtime probe + cache.
+        # openai_tool_calling: most models on OpenRouter expose OpenAI-shape
+        # tool_calls, but Anthropic-routed models behave differently. We
+        # stay conservative and report False; explicit OpenAI-routed models
+        # can be added later if needed.
+        return LLMCapabilities(
+            strict_json_schema=(self._model in _STRICT_JSON_SAFE),
+            token_streaming=True,
+            openai_tool_calling=False,
+            anthropic_tool_use=False,
+        )
 
     def complete(
         self,

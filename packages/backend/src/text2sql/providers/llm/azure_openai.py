@@ -7,8 +7,16 @@ from typing import Any, Iterator
 from openai import AzureOpenAI
 
 from text2sql.config import ProviderEntry
-from text2sql.providers.base import LLMMessage, LLMProvider
+from text2sql.providers.base import LLMCapabilities, LLMMessage, LLMProvider
 from text2sql.providers.factory import _resolve_secret, register_llm
+
+
+_AZURE_CAPS = LLMCapabilities(
+    strict_json_schema=True,
+    token_streaming=True,
+    openai_tool_calling=True,
+    anthropic_tool_use=False,
+)
 
 
 class AzureOpenAILLM(LLMProvider):
@@ -27,11 +35,16 @@ class AzureOpenAILLM(LLMProvider):
     def model_id(self) -> str:
         return f"azure:{self._deployment}"
 
+    @property
+    def capabilities(self) -> LLMCapabilities:
+        return _AZURE_CAPS
+
     def complete(
         self,
         messages: list[LLMMessage],
         *,
         schema: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
@@ -46,6 +59,13 @@ class AzureOpenAILLM(LLMProvider):
                 "type": "json_schema",
                 "json_schema": {"name": "structured", "schema": schema, "strict": True},
             }
+        if tools is not None:
+            kwargs["tools"] = tools
+            # Azure docs: structured outputs are not supported with parallel
+            # function calls. Defensive default — silently disable parallel
+            # tool calls whenever schema + tools are combined.
+            if schema is not None:
+                kwargs["parallel_tool_calls"] = False
         resp = self._client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 

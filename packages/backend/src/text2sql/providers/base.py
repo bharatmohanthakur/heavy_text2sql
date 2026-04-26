@@ -24,10 +24,39 @@ class VectorHit:
 EmbeddingKind = Literal["doc", "query"]
 
 
+@dataclass(frozen=True)
+class LLMCapabilities:
+    """What an LLM provider actually supports.
+
+    The abstraction's job is to surface vendor differences instead of hiding
+    them. Callers query these flags up-front and either dispatch to a code
+    path the provider supports, or fail fast with a useful error.
+
+    - strict_json_schema: server-side enforcement of a JSON schema (Azure
+      / OpenAI response_format json_schema strict=true; Anthropic tool_use
+      with strict=true; Bedrock Converse toolUse). When False, the provider
+      falls back to "instruction-in-system-prompt" — the model usually
+      complies but can drift.
+    - token_streaming: stream() yields real per-token deltas as the model
+      produces them. When False, stream() emits one chunk at the end.
+    - openai_tool_calling: works as the agent-loop /chat backend (the
+      OpenAI Chat Completions tools=[...] / tool_calls wire shape).
+    - anthropic_tool_use: supports Anthropic-style tool_use content blocks
+      (used by the Anthropic-flavored agent backend in the translator).
+    """
+    strict_json_schema: bool
+    token_streaming: bool
+    openai_tool_calling: bool
+    anthropic_tool_use: bool
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     @property
     def model_id(self) -> str: ...
+
+    @property
+    def capabilities(self) -> LLMCapabilities: ...
 
     def complete(
         self,

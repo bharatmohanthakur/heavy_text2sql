@@ -7,8 +7,16 @@ from typing import Any, Iterator
 from openai import OpenAI
 
 from text2sql.config import ProviderEntry
-from text2sql.providers.base import LLMMessage, LLMProvider
+from text2sql.providers.base import LLMCapabilities, LLMMessage, LLMProvider
 from text2sql.providers.factory import _resolve_secret, register_llm
+
+
+_OPENAI_CAPS = LLMCapabilities(
+    strict_json_schema=True,
+    token_streaming=True,
+    openai_tool_calling=True,
+    anthropic_tool_use=False,
+)
 
 
 class OpenAILLM(LLMProvider):
@@ -23,11 +31,16 @@ class OpenAILLM(LLMProvider):
     def model_id(self) -> str:
         return f"openai:{self._model}"
 
+    @property
+    def capabilities(self) -> LLMCapabilities:
+        return _OPENAI_CAPS
+
     def complete(
         self,
         messages: list[LLMMessage],
         *,
         schema: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
@@ -42,6 +55,12 @@ class OpenAILLM(LLMProvider):
                 "type": "json_schema",
                 "json_schema": {"name": "structured", "schema": schema, "strict": True},
             }
+        if tools is not None:
+            kwargs["tools"] = tools
+            if schema is not None:
+                # OpenAI docs: structured outputs unsupported with parallel
+                # function calls. Defensive default.
+                kwargs["parallel_tool_calls"] = False
         resp = self._client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 
