@@ -170,10 +170,10 @@ llm:
     classifier_fallback:   azure-gpt-4o
 ```
 
-> **Note**: the agentic chat (`/chat`) currently uses the OpenAI tool-calling
-> shape, so its `llm_for_task("sql_generation")` must resolve to an
-> `azure_openai` or `openai` provider. The pipeline (`/query`) accepts any
-> provider that implements the `LLMProvider` protocol.
+> **Note**: the agentic chat (`/chat`) accepts any provider whose
+> capabilities include `openai_tool_calling` OR `anthropic_tool_use`. Today
+> that's `azure_openai`, `openai`, `anthropic`, and `bedrock`. The pipeline
+> (`/query`) accepts any provider that implements the `LLMProvider` protocol.
 
 ### LLM capability matrix (which provider works with which entry point)
 
@@ -187,17 +187,18 @@ provider supports or fails fast with an actionable error. Today:
 | `openai` | ✅ | ✅ | ✅ | ❌ |
 | `anthropic` | ✅ via native `tool_use` (strict=true) | ✅ | ❌ | ✅ |
 | `openrouter` | ✅ runtime probe + cache (auto-discovers per-model support, falls back to instruction) | ✅ | ❌ | ❌ |
-| `bedrock` | ✅ via Converse `toolUse` | ✅ via `ConverseStream` | ❌ | ✅ |
+| `bedrock` | ✅ via Converse `toolUse` | ✅ via `ConverseStream` | ❌ | ✅ via Converse-shape adapter on the same translator |
 
 What this means for picking a primary:
 
-- **Azure / OpenAI / Anthropic** work for both `/query` AND `/chat`. The
-  agent loop has a built-in OpenAI ↔ Anthropic tools translator so a
-  Claude direct API key drives `/chat` with the same SSE streaming, tool
-  registry, and post-process viz path as Azure.
-- **OpenRouter and Bedrock** drive `/query` today. `/chat` for these is a
-  short follow-on (Bedrock-Anthropic plugs into the same translator;
-  OpenRouter-Anthropic does too).
+- **Azure / OpenAI / Anthropic / Bedrock** work for both `/query` AND
+  `/chat`. The agent loop has a built-in OpenAI ↔ Anthropic tools
+  translator (Anthropic direct via `/v1/messages`, Bedrock via Converse
+  `/model/{id}/converse-stream` with toolUse/toolResult key renames) so
+  any of these drives `/chat` with the same SSE streaming, tool registry,
+  and post-process viz path as Azure.
+- **OpenRouter** drives `/query` today; `/chat` is a short follow-on
+  (OpenRouter-Anthropic plugs into the same translator).
 - **All five providers honor `sql_generation` strict-schema** now — no
   more "soft instruction" warnings at startup. The repair loop is still
   there as a backstop.
@@ -736,10 +737,12 @@ API, eval harness.
 - **"The /chat agent loop requires an LLM with openai_tool_calling or
   anthropic_tool_use capability"** — the primary LLM under task
   `sql_generation` must be one of: `azure_openai`, `openai`,
-  `anthropic`. The first two run natively; Anthropic runs through the
-  built-in OpenAI ↔ Anthropic tools translator in the agent loop.
-  OpenRouter and Bedrock drive `/query` but cannot drive `/chat` yet
-  (Bedrock-Anthropic plugs into the same translator in a follow-on).
+  `anthropic`, `bedrock`. The first two run natively; Anthropic runs
+  through the built-in OpenAI ↔ Anthropic tools translator; Bedrock runs
+  through the same translator with a Converse wire-shape rename
+  (toolUse/toolResult/inputSchema keys). OpenRouter drives `/query` but
+  cannot drive `/chat` yet (OpenRouter-Anthropic plugs into the same
+  translator in a follow-on).
 - **Cluster IDs change across rebuilds** — Hungarian assignment in
   `classification/subcluster.py` keeps them stable when overlap > 70%.
 - **Settings UI: "Validation failed: max_tokens: ..." after clearing a

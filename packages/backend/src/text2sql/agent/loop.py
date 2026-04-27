@@ -29,11 +29,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+import httpx
 from openai import AzureOpenAI, OpenAI
 
 from text2sql.agent.conversation_store import ConversationStore
 from text2sql.agent.tools import ToolContext, ToolRegistry, ToolResult, default_registry
 from text2sql.config import ProviderEntry
+from text2sql.providers.llm.bedrock import _extract_json_objects
 
 log = logging.getLogger(__name__)
 
@@ -237,11 +239,10 @@ class _LLMClient:
     Backends:
       - kind in {azure_openai, openai}   → `_OpenAIToolBackend` (passthrough)
       - kind in {anthropic}              → `_AnthropicToolBackend` (translator)
-
-    Bedrock-Anthropic via Converse uses the same tool_use semantics as
-    direct Anthropic; a `_BedrockAnthropicToolBackend` adapter is a
-    natural follow-on (capability flag `anthropic_tool_use=True` already
-    declared on the bedrock provider).
+      - kind in {bedrock}                → `_BedrockAnthropicToolBackend`
+        (translator + Converse wire-shape rename — Bedrock's Converse API
+        is wire-compatible with Anthropic's tool_use semantics, just with
+        different JSON keys)
     """
 
     def __init__(self, spec: ProviderEntry, *, max_tokens: int = 1500) -> None:
@@ -252,6 +253,8 @@ class _LLMClient:
             self._backend: _ToolBackend = _OpenAIToolBackend(cfg, max_tokens=max_tokens)
         elif kind == "anthropic":
             self._backend = _AnthropicToolBackend(cfg, max_tokens=max_tokens)
+        elif kind == "bedrock":
+            self._backend = _BedrockAnthropicToolBackend(cfg, max_tokens=max_tokens)
         else:
             raise ValueError(
                 f"The /chat agent loop requires an LLM with either "
@@ -261,7 +264,8 @@ class _LLMClient:
                 f"Either:\n"
                 f"  1. Edit configs/default.yaml — set "
                 f"llm.task_routing.sql_generation to a provider with one of "
-                f"the supported kinds: 'azure_openai', 'openai', 'anthropic'.\n"
+                f"the supported kinds: 'azure_openai', 'openai', 'anthropic', "
+                f"'bedrock'.\n"
                 f"  2. Use /query (the canonical pipeline) — it works with "
                 f"all 5 LLM providers."
             )
@@ -573,6 +577,272 @@ class _AnthropicToolBackend(_ToolBackend):
                 if tc["name"]
             ],
         }
+
+
+# ── Bedrock backend (translator + Converse wire-shape rename) ───────────────
+
+
+class _BedrockAnthropicToolBackend(_ToolBackend):
+    """Bedrock's Converse API is wire-compatible with Anthropic's tool_use
+    semantics, just with different JSON keys. We reuse the Anthropic
+    translator's `_openai_messages_to_anthropic` and `_openai_tools_to_anthropic`
+    to land in Anthropic-block-format, then run a key-rename pass to
+    produce the Converse wire shape:
+
+      Anthropic                                          Converse
+      ────────                                           ────────
+      {"type":"text","text":"..."}                       {"text":"..."}
+      {"type":"tool_use","id":I,"name":N,"input":X}      {"toolUse":{"toolUseId":I,"name":N,"input":X}}
+      {"type":"tool_result","tool_use_id":I,"content":S} {"toolResult":{"toolUseId":I,"content":[{"text":S}]}}
+      tools=[{name,description,input_schema}]            toolConfig.tools=[{toolSpec:{name,description,inputSchema:{json}}}]
+      tool_choice={type:auto|any|tool,name?}             toolChoice={auto:{}}|{any:{}}|{tool:{name}}
+      system=str                                         system=[{text:str}]
+      max_tokens (top-level)                             inferenceConfig.maxTokens
+
+    Streaming uses ConverseStream, decoded by the same `_extract_json_objects`
+    walker we use for the pipeline path. Each event JSON shape:
+      contentBlockStart   → {"start":{"toolUse":{"toolUseId","name"}},"contentBlockIndex":N}
+      contentBlockDelta   → {"delta":{"text":"..."},"contentBlockIndex":N}
+                            OR {"delta":{"toolUse":{"input":"<json fragment>"}},"contentBlockIndex":N}
+      contentBlockStop    → {"contentBlockIndex":N}
+      messageStart/Stop   → ignored
+    """
+
+    def __init__(self, cfg: dict[str, Any], *, max_tokens: int) -> None:
+        self._max_tokens = max_tokens
+        self._region: str = cfg.get("region", "us-west-2")
+        self._model: str = cfg["model"]
+        self._api_key: str = os.environ[cfg["api_key_env"]]
+        self._timeout_s: float = float(cfg.get("timeout_s", 120.0))
+        self._client = httpx.Client(
+            base_url=f"https://bedrock-runtime.{self._region}.amazonaws.com",
+            timeout=self._timeout_s,
+        )
+
+    # ── Outgoing translation: Anthropic blocks → Converse blocks ───────────
+
+    @staticmethod
+    def _anthropic_blocks_to_converse(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for m in messages:
+            new_content: list[dict[str, Any]] = []
+            for blk in m.get("content") or []:
+                t = blk.get("type")
+                if t == "text":
+                    new_content.append({"text": blk.get("text", "")})
+                elif t == "tool_use":
+                    new_content.append({"toolUse": {
+                        "toolUseId": blk.get("id", ""),
+                        "name": blk.get("name", ""),
+                        "input": blk.get("input") or {},
+                    }})
+                elif t == "tool_result":
+                    content = blk.get("content")
+                    if isinstance(content, str):
+                        result_blocks: list[dict[str, Any]] = [{"text": content}]
+                    elif isinstance(content, list):
+                        # If the caller already passed Anthropic content
+                        # blocks, rename keys; otherwise stringify for safety.
+                        result_blocks = []
+                        for c in content:
+                            if isinstance(c, dict) and "text" in c:
+                                result_blocks.append({"text": c["text"]})
+                            else:
+                                result_blocks.append({"text": json.dumps(c)})
+                    else:
+                        result_blocks = [{"text": json.dumps(content)}]
+                    new_content.append({"toolResult": {
+                        "toolUseId": blk.get("tool_use_id", ""),
+                        "content": result_blocks,
+                    }})
+                else:
+                    # Unknown / future block type — fall back to text so the
+                    # message still passes Converse validation.
+                    new_content.append({"text": json.dumps(blk)})
+            out.append({"role": m["role"], "content": new_content})
+        return out
+
+    @staticmethod
+    def _anthropic_tools_to_converse(
+        tools: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {"toolSpec": {
+                "name": t["name"],
+                "description": t.get("description", "") or "",
+                "inputSchema": {"json": t.get("input_schema") or {
+                    "type": "object", "properties": {}
+                }},
+            }}
+            for t in tools
+        ]
+
+    @staticmethod
+    def _map_tool_choice(tc: str | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(tc, str):
+            if tc in ("required", "any"):
+                return {"any": {}}
+            # Converse has no "none"; the loop never passes it but treat
+            # defensively as auto.
+            return {"auto": {}}
+        if isinstance(tc, dict):
+            t = tc.get("type")
+            if t == "any":
+                return {"any": {}}
+            if t == "tool":
+                return {"tool": {"name": tc.get("name", "")}}
+            return {"auto": {}}
+        return {"auto": {}}
+
+    # ── Incoming streaming ──────────────────────────────────────────────────
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float = 0.0,
+    ) -> Iterator[dict[str, Any]]:
+        anth_system, anth_messages = _AnthropicToolBackend._openai_messages_to_anthropic(messages)
+        anth_tools = _AnthropicToolBackend._openai_tools_to_anthropic(tools)
+        converse_messages = self._anthropic_blocks_to_converse(anth_messages)
+        converse_tools = self._anthropic_tools_to_converse(anth_tools)
+
+        payload: dict[str, Any] = {
+            "messages": converse_messages,
+            "inferenceConfig": {
+                "maxTokens": self._max_tokens,
+                "temperature": temperature,
+            },
+            "toolConfig": {
+                "tools": converse_tools,
+                "toolChoice": self._map_tool_choice(tool_choice),
+            },
+        }
+        if anth_system:
+            payload["system"] = [{"text": anth_system}]
+
+        with self._client.stream(
+            "POST",
+            f"/model/{self._model}/converse-stream",
+            headers={
+                "content-type": "application/json",
+                "accept": "application/vnd.amazon.eventstream",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+            json=payload,
+        ) as resp:
+            if resp.status_code >= 400:
+                body = resp.read().decode(errors="replace")
+                raise RuntimeError(
+                    f"bedrock converse-stream {resp.status_code} "
+                    f"(model={self._model}, region={self._region}): {body[:400]}"
+                )
+            yield from self._translate_eventstream(resp.iter_bytes())
+
+    def _translate_eventstream(
+        self, byte_iter: Iterator[bytes],
+    ) -> Iterator[dict[str, Any]]:
+        text_acc = ""
+        # Tool calls assembled in order of arrival (matches OpenAI index ordering).
+        tool_calls: list[dict[str, Any]] = []
+        # Maps Converse contentBlockIndex → our zero-based tool index. Plain
+        # text blocks aren't in this map.
+        block_to_tool_idx: dict[int, int] = {}
+
+        buffer = b""
+        for chunk in byte_iter:
+            if not chunk:
+                continue
+            buffer += chunk
+            for obj in _extract_json_objects(buffer):
+                yield from self._handle_event(
+                    obj, tool_calls, block_to_tool_idx,
+                )
+                # Side-effect: text deltas land in obj["delta"]["text"];
+                # accumulate the text outside _handle_event.
+                delta = (obj.get("delta") or {})
+                t = delta.get("text")
+                if isinstance(t, str) and t:
+                    text_acc += t
+            last = buffer.rfind(b"}")
+            buffer = buffer[last + 1 :] if last >= 0 else buffer
+
+        yield {
+            "type": "complete",
+            "content": text_acc,
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"] or "{}",
+                    },
+                }
+                for tc in tool_calls
+                if tc["name"]
+            ],
+        }
+
+    def _handle_event(
+        self,
+        obj: dict[str, Any],
+        tool_calls: list[dict[str, Any]],
+        block_to_tool_idx: dict[int, int],
+    ) -> Iterator[dict[str, Any]]:
+        # contentBlockStart for a tool_use block.
+        start = obj.get("start")
+        if isinstance(start, dict):
+            tu = start.get("toolUse")
+            if isinstance(tu, dict):
+                blk_idx = obj.get("contentBlockIndex", 0)
+                my_idx = len(tool_calls)
+                tool_calls.append({
+                    "id": tu.get("toolUseId", "") or f"call_{my_idx}",
+                    "name": tu.get("name", "") or "",
+                    "arguments": "",
+                })
+                block_to_tool_idx[int(blk_idx)] = my_idx
+                yield {
+                    "type": "tool_call_delta",
+                    "index": my_idx,
+                    "id": tool_calls[my_idx]["id"],
+                    "name": tool_calls[my_idx]["name"],
+                    "arguments_delta": "",
+                }
+                return
+
+        delta = obj.get("delta")
+        if isinstance(delta, dict):
+            # Text delta — Converse emits delta.text as a string fragment.
+            text = delta.get("text")
+            if isinstance(text, str) and text:
+                yield {"type": "text_delta", "delta": text}
+                return
+            # Tool input partial JSON fragment.
+            tu_delta = delta.get("toolUse")
+            if isinstance(tu_delta, dict):
+                partial = tu_delta.get("input")
+                if isinstance(partial, str) and partial:
+                    blk_idx = int(obj.get("contentBlockIndex", 0))
+                    my_idx = block_to_tool_idx.get(blk_idx)
+                    if my_idx is None:
+                        return
+                    tool_calls[my_idx]["arguments"] += partial
+                    yield {
+                        "type": "tool_call_delta",
+                        "index": my_idx,
+                        "id": tool_calls[my_idx]["id"],
+                        "name": tool_calls[my_idx]["name"],
+                        "arguments_delta": partial,
+                    }
+                    return
+        # contentBlockStop / messageStart / messageStop / metadata events
+        # have no user-visible deltas; ignore them.
 
 
 # ── Runner ───────────────────────────────────────────────────────────────────
