@@ -68,6 +68,10 @@ def _quote_table(fqn: str, dialect: str) -> str:
     if dialect == "postgresql":
         # Ed-Fi's Postgres installer creates lowercase identifiers.
         return f'"{schema.lower()}"."{table.lower()}"'
+    if dialect == "sqlite":
+        # Single schema (`main`); the catalog FQN's schema prefix
+        # (`edfi.X`) doesn't exist on SQLite. Drop it.
+        return f'"{table}"'
     return f"{schema}.{table}"
 
 
@@ -77,6 +81,8 @@ def _qualify(fqn: str, col: str, dialect: str) -> str:
         return f"[{schema}].[{table}].[{col}]"
     if dialect == "postgresql":
         return f'"{schema.lower()}"."{table.lower()}"."{col.lower()}"'
+    if dialect == "sqlite":
+        return f'"{table}"."{col}"'
     return f"{schema}.{table}.{col}"
 
 

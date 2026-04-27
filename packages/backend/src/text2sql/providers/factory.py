@@ -113,6 +113,7 @@ def _ensure_loaded() -> None:
     from text2sql.providers.vector import faiss_store as _vec_faiss  # noqa: F401
     from text2sql.providers.db import postgresql as _db_pg  # noqa: F401
     from text2sql.providers.db import mssql as _db_mssql  # noqa: F401
+    from text2sql.providers.db import sqlite as _db_sqlite  # noqa: F401
 
     _LOADED = True
 

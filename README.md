@@ -501,11 +501,20 @@ target_db:
       trust_server_certificate: true
       encrypt: false                   # set true for production / Azure SQL
       driver: "ODBC Driver 18 for SQL Server"   # mssql only
+
+    # OR — SQLite (file-backed, zero-infra; for demos, CI, prototyping)
+    my-demo-sqlite:
+      kind: sqlite
+      path: data/edfi/sample_demo.sqlite   # repo-relative or absolute
+      read_only: true                       # default true; agent loop can't mutate
 ```
 
-The two existing kinds — `postgresql` and `mssql` — are already implemented
-in `packages/backend/src/text2sql/providers/db/`. You don't write code, you
-just add the YAML entry.
+The three supported kinds — `postgresql`, `mssql`, and `sqlite` — are
+already implemented in `packages/backend/src/text2sql/providers/db/`. You
+don't write code, you just add the YAML entry. **SQLite has no host /
+port / user / password** — only `path` (filesystem) and `read_only`
+(opens in `mode=ro`). Repo-relative paths resolve against the repo root,
+so the same overlay file works in CI and dev.
 
 ### 2. Put credentials in `.env`
 
@@ -566,9 +575,10 @@ cd packages/frontend && npm run dev
 ### Notes when adopting your own DB
 
 - **Dialect detection is automatic.** The validator, repair loop, and prompt
-  rules all read `sql_engine.dialect` ("postgresql" / "mssql"). Identifier
-  quoting (`"name"` vs `[name]`) and row caps (`LIMIT 50` vs `TOP 50`) are
-  picked accordingly.
+  rules all read `sql_engine.dialect` ("postgresql" / "mssql" / "sqlite").
+  Identifier quoting (`"name"` vs `[name]`) and row caps (`LIMIT 50` vs
+  `TOP 50`) are picked accordingly. SQLite shares the Postgres dialect
+  shape (double-quote idents, `LIMIT N`).
 - **Gold few-shots are dialect-locked.** A gold pair written in Postgres
   syntax will steer the LLM to write Postgres syntax. Re-seed when switching
   dialects (the bootstrap YAML is MSSQL T-SQL).

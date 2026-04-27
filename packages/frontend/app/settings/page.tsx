@@ -107,7 +107,7 @@ type TestState = { pending: boolean; ok?: boolean; error?: string; elapsed_ms?: 
 
 function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSaved: () => void }) {
   const [name, setName] = useState("my-ods");
-  const [kind, setKind] = useState<"postgresql" | "mssql">("postgresql");
+  const [kind, setKind] = useState<"postgresql" | "mssql" | "sqlite">("postgresql");
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(5432);
   const [database, setDatabase] = useState("EdFi_Ods");
@@ -116,22 +116,30 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
   const [setPrimary, setSetPrimary] = useState(true);
   const [trust, setTrust] = useState(true);
   const [encrypt, setEncrypt] = useState(false);
+  // SQLite-specific
+  const [path, setPath] = useState("data/edfi/sample_demo.sqlite");
+  const [readOnly, setReadOnly] = useState(true);
   const [test, setTest] = useState<TestState>({ pending: false });
   const [save, setSave] = useState<TestState>({ pending: false });
 
-  // Adjust default port when kind changes
+  // Adjust default port when kind changes (no-op for sqlite)
   useEffect(() => {
-    setPort(kind === "postgresql" ? 5432 : 1433);
+    if (kind === "postgresql") setPort(5432);
+    else if (kind === "mssql") setPort(1433);
   }, [kind]);
 
   function form() {
     return {
-      name, kind, host, port, database, user, password,
-      set_primary: setPrimary,
+      name, kind, set_primary: setPrimary,
+      // Network-engine fields (server ignores when kind=sqlite)
+      host, port, database, user, password,
       trust_server_certificate: trust,
       encrypt,
       driver: "pymssql",
       schema_search_path: ["edfi", "tpdm"],
+      // SQLite-specific (server ignores for postgres/mssql)
+      path,
+      read_only: readOnly,
     };
   }
 
@@ -159,42 +167,61 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
   return (
     <FormCard
       title="Connect a database"
-      subtitle="The populated ODS the platform queries. Credentials persist to runtime_secrets.json (gitignored)."
+      subtitle="The ODS the platform queries. Networked engines persist credentials to runtime_secrets.json (gitignored). SQLite is a single file — no credentials needed."
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Connection name">
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Type">
-          <select className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as "postgresql" | "mssql")}>
+          <select className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
             <option value="postgresql">PostgreSQL</option>
             <option value="mssql">MSSQL Server / Azure SQL</option>
+            <option value="sqlite">SQLite (file)</option>
           </select>
         </Field>
-        <Field label="Host">
-          <input className={inputCls} value={host} onChange={(e) => setHost(e.target.value)} placeholder="127.0.0.1" />
-        </Field>
-        <Field label="Port">
-          <input className={inputCls} type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
-        </Field>
-        <Field label="Database">
-          <input className={inputCls} value={database} onChange={(e) => setDatabase(e.target.value)} />
-        </Field>
-        <Field label="Username">
-          <input className={inputCls} value={user} onChange={(e) => setUser(e.target.value)} />
-        </Field>
-        <Field label="Password">
-          <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
-        </Field>
-        <div className="flex items-end gap-3 text-xs text-muted">
-          <Toggle label="Set as primary target DB" checked={setPrimary} onChange={setSetPrimary} />
-          {kind === "mssql" && (
-            <>
-              <Toggle label="Trust certificate" checked={trust} onChange={setTrust} />
-              <Toggle label="Encrypt" checked={encrypt} onChange={setEncrypt} />
-            </>
-          )}
-        </div>
+
+        {kind === "sqlite" ? (
+          <>
+            <Field label="File path" full>
+              <input className={inputCls} value={path} onChange={(e) => setPath(e.target.value)} placeholder="data/edfi/sample_demo.sqlite" />
+            </Field>
+            <div className="flex items-end gap-3 text-xs text-muted col-span-full">
+              <Toggle label="Set as primary target DB" checked={setPrimary} onChange={setSetPrimary} />
+              <Toggle label="Open as read-only" checked={readOnly} onChange={setReadOnly} />
+            </div>
+            <p className="col-span-full text-xs text-muted">
+              Path is repo-relative or absolute. The file must exist and be readable. <code>:memory:</code> is not allowed (it'd appear empty across requests).
+            </p>
+          </>
+        ) : (
+          <>
+            <Field label="Host">
+              <input className={inputCls} value={host} onChange={(e) => setHost(e.target.value)} placeholder="127.0.0.1" />
+            </Field>
+            <Field label="Port">
+              <input className={inputCls} type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+            </Field>
+            <Field label="Database">
+              <input className={inputCls} value={database} onChange={(e) => setDatabase(e.target.value)} />
+            </Field>
+            <Field label="Username">
+              <input className={inputCls} value={user} onChange={(e) => setUser(e.target.value)} />
+            </Field>
+            <Field label="Password">
+              <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+            </Field>
+            <div className="flex items-end gap-3 text-xs text-muted">
+              <Toggle label="Set as primary target DB" checked={setPrimary} onChange={setSetPrimary} />
+              {kind === "mssql" && (
+                <>
+                  <Toggle label="Trust certificate" checked={trust} onChange={setTrust} />
+                  <Toggle label="Encrypt" checked={encrypt} onChange={setEncrypt} />
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <FormActions

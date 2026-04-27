@@ -307,16 +307,32 @@ def _inheritance_chain_extras(
 
 
 def _filter_catalog_to_live_db(catalog: TableCatalog, sql_engine: SqlEngine) -> TableCatalog:
-    """Return a new TableCatalog containing only tables/columns the engine sees."""
+    """Return a new TableCatalog containing only tables/columns the engine sees.
+
+    SQLite has a single schema (`main`) so an Ed-Fi catalog whose entries
+    are tagged `schema='edfi'` would be filtered to nothing if we
+    insisted on schema match. Match by table name alone for SQLite — the
+    list-columns call still uses the engine's own schema (`main`)."""
     from text2sql.table_catalog import ColumnInfo, TableEntry
 
-    live_tables = {(s.lower(), t.lower()) for s, t in sql_engine.list_tables()}
+    live = sql_engine.list_tables()
+    schema_agnostic = sql_engine.dialect == "sqlite"
+    if schema_agnostic:
+        live_table_names = {t.lower() for _, t in live}
+        live_schema_for_cols = (live[0][0] if live else "main")
+    else:
+        live_tables = {(s.lower(), t.lower()) for s, t in live}
     kept_entries: list[TableEntry] = []
     for entry in catalog.entries:
-        if (entry.schema.lower(), entry.table.lower()) not in live_tables:
-            continue
+        if schema_agnostic:
+            if entry.table.lower() not in live_table_names:
+                continue
+        else:
+            if (entry.schema.lower(), entry.table.lower()) not in live_tables:
+                continue
         try:
-            live_cols = {c[0].lower(): c for c in sql_engine.list_columns(entry.schema, entry.table)}
+            schema_for_cols = live_schema_for_cols if schema_agnostic else entry.schema
+            live_cols = {c[0].lower(): c for c in sql_engine.list_columns(schema_for_cols, entry.table)}
         except Exception:
             live_cols = {}
         if not live_cols:

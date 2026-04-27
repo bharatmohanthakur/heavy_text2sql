@@ -175,6 +175,10 @@ class ContextBuilder:
     def _quote_id(self, name: str) -> str:
         if self.dialect == "mssql":
             return f"[{name}]"
+        if self.dialect == "sqlite":
+            # SQLite is case-preserving and (once quoted) case-sensitive.
+            # The Ed-Fi table is "Student", not "student".
+            return '"' + name + '"'
         # Postgres: identifiers in the populated DB are lowercase; quote-lower
         # to match. For other Postgres deployments the user can override this.
         return '"' + name.lower() + '"'
@@ -230,8 +234,8 @@ _DEFAULT_RULES = [
     # or an aggregate. Be deterministic so users see consistent counts across runs.
     "If the question asks for a LIST of rows (not an aggregate / count / sum / "
     "average): cap the result to exactly 50 rows. Use `SELECT TOP 50 ...` for "
-    "mssql or append `LIMIT 50` for postgresql. Do NOT use `TOP 1000`, `TOP 100`, "
-    "or any other cap — always exactly 50.",
+    "mssql or append `LIMIT 50` for postgresql / sqlite. Do NOT use `TOP 1000`, "
+    "`TOP 100`, or any other cap — always exactly 50.",
     "If the question asks for an AGGREGATE (count / sum / average / min / max / "
     "group-by totals): do NOT add TOP/LIMIT — return all aggregate rows.",
     "Identifiers must be quoted per the declared dialect. For postgresql, "

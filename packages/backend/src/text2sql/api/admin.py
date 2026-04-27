@@ -550,21 +550,30 @@ def _write_secrets(secrets: dict[str, str]) -> None:
 
 
 class _DatabaseConnector(BaseModel):
-    """One-form-fits-all DB connector — what the UI submits."""
+    """One-form-fits-all DB connector — what the UI submits.
+
+    Networked engines (postgresql, mssql) need host/port/user/password.
+    SQLite needs only `path` + `read_only` — the host/port/etc fields
+    default to empty and are ignored when `kind == "sqlite"`.
+    """
     name: str = Field(..., description="A short name for this connection (becomes the provider key)")
-    kind: str = Field(..., description="postgresql | mssql")
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str = Field("", description="Plaintext password — stored in runtime_secrets.json (gitignored)")
+    kind: str = Field(..., description="postgresql | mssql | sqlite")
     set_primary: bool = True
-    # MSSQL-specific knobs (ignored for postgresql)
+    # Network-engine fields (ignored when kind=sqlite)
+    host: str = ""
+    port: int | None = 0
+    database: str = ""
+    user: str = ""
+    password: str = Field("", description="Plaintext password — stored in runtime_secrets.json (gitignored)")
+    # MSSQL-specific knobs
     trust_server_certificate: bool = True
     encrypt: bool = False
     driver: str = "pymssql"
     # Postgres-specific
     schema_search_path: list[str] = Field(default_factory=lambda: ["edfi", "tpdm"])
+    # SQLite-specific
+    path: str = Field("", description="Filesystem path. Repo-relative is fine.")
+    read_only: bool = True
 
 
 class _LLMConnector(BaseModel):
@@ -611,6 +620,18 @@ def _env_var_name(provider_name: str, suffix: str) -> str:
 def _build_db_provider_entry(c: _DatabaseConnector) -> tuple[dict[str, Any], dict[str, str]]:
     """Translate a DatabaseConnector form into a YAML-shape provider dict
     + a (env-name → value) secrets-update dict."""
+    if c.kind == "sqlite":
+        # File-backed engine — no password, no host. Reject :memory: through
+        # the connector form (silent emptiness across requests is a footgun).
+        if not c.path:
+            raise HTTPException(400, "sqlite connector requires `path`")
+        if c.path.strip() == ":memory:":
+            raise HTTPException(400, "sqlite path cannot be ':memory:' — use a file")
+        return {
+            "kind": "sqlite",
+            "path": c.path,
+            "read_only": bool(c.read_only),
+        }, {}
     secrets: dict[str, str] = {}
     pwd_env = _env_var_name(c.name, "PASSWORD")
     if c.password:
@@ -741,6 +762,27 @@ def test_database_connector(c: _DatabaseConnector) -> _DbTestResponse:
     import time
     from text2sql.config import ProviderEntry
     from text2sql.providers import build_sql_engine
+
+    # SQLite has no secrets / no env-var dance — short-circuit.
+    if c.kind == "sqlite":
+        if not c.path:
+            return _DbTestResponse(ok=False, error="path is required for sqlite",
+                                   elapsed_ms=0.0)
+        spec_dict: dict[str, Any] = {
+            "kind": "sqlite", "path": c.path, "read_only": bool(c.read_only),
+        }
+        t0 = time.perf_counter()
+        try:
+            engine = build_sql_engine(ProviderEntry(**spec_dict))
+            engine.execute("SELECT 1 AS ok", limit=1)
+            elapsed = (time.perf_counter() - t0) * 1000.0
+            version = (engine.execute("SELECT sqlite_version() AS v", limit=1) or [{}])[0].get("v")
+            tables = engine.list_tables()
+            detail = f"sqlite {version}, {len(tables)} table(s)"
+            return _DbTestResponse(ok=True, elapsed_ms=elapsed, server_version=detail)
+        except Exception as e:
+            return _DbTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
+                                   elapsed_ms=(time.perf_counter() - t0) * 1000.0)
 
     # Stash the password under a temp env var so build_sql_engine's
     # _resolve_secret picks it up. Cleaned up in finally.
