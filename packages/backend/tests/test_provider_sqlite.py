@@ -295,6 +295,64 @@ def test_context_quote_id_preserves_case_for_sqlite():
     assert cb_pg._quote_id("Student") == '"student"'
 
 
+# ── Catalog-builder integration ─────────────────────────────────────────────
+
+
+def test_catalog_builder_helpers_target_main_schema_on_sqlite():
+    """The catalog builder's _qual / _row_count / _sample_rows /
+    _column_distinct must all execute against `main`, not `edfi`. The
+    Ed-Fi catalog tags entries with schema='edfi' but SQLite has no such
+    schema — the helpers must drop the prefix."""
+    from text2sql.table_catalog.catalog_builder import (
+        _column_distinct, _qual, _row_count, _sample_rows,
+    )
+
+    p = _fresh_db_path()
+    try:
+        eng = SqliteEngine(ProviderEntry(kind="sqlite", path=str(p), read_only=True))
+
+        # _qual — no schema prefix on sqlite (would fail on `"edfi"."Student"`)
+        assert _qual(eng, "edfi", "Student") == '"Student"'
+
+        # _row_count — the unqualified ref must resolve against `main`
+        rc = _row_count(eng, "edfi", "Student")
+        assert rc == 2
+
+        # _sample_rows — same ref, returns LIMIT-N rows
+        rows = _sample_rows(eng, "edfi", "Student", n=10)
+        assert len(rows) == 2
+        assert {r["FirstName"] for r in rows} == {"Ada", "Bo"}
+
+        # _column_distinct — pulls distinct column values
+        vals, distinct = _column_distinct(
+            eng, "edfi", "Student", "FirstName",
+            max_values=10, max_scan_rows=100, low_card_threshold=100,
+        )
+        assert distinct == 2
+        assert sorted(vals) == ["Ada", "Bo"]
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def test_catalog_builder_columns_from_db_works_on_sqlite():
+    """_columns_from_db calls engine.list_columns — schema arg is ignored
+    by SqliteEngine. Verify the catalog-builder path still gets back the
+    right ColumnInfo records (PK detection, type, nullability)."""
+    from text2sql.table_catalog.catalog_builder import _columns_from_db
+
+    p = _fresh_db_path()
+    try:
+        eng = SqliteEngine(ProviderEntry(kind="sqlite", path=str(p), read_only=True))
+        cols = _columns_from_db(eng, "edfi", "Student", pk=["StudentUSI"])
+        by_name = {c.name: c for c in cols}
+        assert by_name["StudentUSI"].is_identifying is True
+        assert by_name["FirstName"].is_identifying is False
+        assert by_name["FirstName"].nullable is True
+        assert by_name["FirstName"].data_type == "TEXT"
+    finally:
+        p.unlink(missing_ok=True)
+
+
 def test_admin_save_sqlite_rejects_memory_path(tmp_path, monkeypatch):
     """`:memory:` would silently appear empty across requests — reject."""
     from fastapi.testclient import TestClient

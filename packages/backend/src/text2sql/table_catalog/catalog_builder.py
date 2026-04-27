@@ -141,6 +141,11 @@ class TableCatalog:
 
 
 def _qual(engine: SqlEngine, schema: str, table: str) -> str:
+    if engine.dialect == "sqlite":
+        # Single schema (`main`); the Ed-Fi catalog's schema (e.g. "edfi")
+        # doesn't exist on SQLite. Emit the unqualified table — SQLite
+        # resolves it against `main` automatically.
+        return engine.quote_identifier(table)
     return f"{engine.quote_identifier(schema)}.{engine.quote_identifier(table)}"
 
 
