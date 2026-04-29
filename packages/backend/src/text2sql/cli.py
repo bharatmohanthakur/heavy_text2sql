@@ -287,7 +287,9 @@ def evaluate(
     cfg = load_config()
     embedder = build_embedding(cfg.embedding_provider())
     catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
-    store = GoldStore(_metadata_sa_url(cfg), embedder, catalog=catalog)
+    _ap, _ad = _active_provider_info(cfg)
+    store = GoldStore(_metadata_sa_url(cfg), embedder, catalog=catalog,
+                       active_provider=_ap, active_dialect=_ad)
     pipeline = _build_pipeline()
 
     typer.echo("Running evaluation…")
@@ -339,7 +341,9 @@ def serve(
     gold_store = None
     try:
         embedder = build_embedding(cfg.embedding_provider())
-        gold_store = GoldStore(_metadata_sa_url(cfg), embedder, catalog=catalog)
+        _ap, _ad = _active_provider_info(cfg)
+        gold_store = GoldStore(_metadata_sa_url(cfg), embedder, catalog=catalog,
+                                 active_provider=_ap, active_dialect=_ad)
     except Exception as e:
         typer.echo(f"(no gold store available: {e})", err=True)
 
@@ -495,7 +499,9 @@ def _build_pipeline():
     gold_store = None
     try:
         sa_url = _metadata_sa_url(cfg)
-        gold_store = GoldStore(sa_url, embedder, catalog=catalog)
+        _ap, _ad = _active_provider_info(cfg)
+        gold_store = GoldStore(sa_url, embedder, catalog=catalog,
+                                 active_provider=_ap, active_dialect=_ad)
     except Exception:
         pass
 
@@ -574,7 +580,9 @@ def _build_agent_runner():
 
     try:
         sa_url = _metadata_sa_url(cfg)
-        gold_store = GoldStore(sa_url, embedder, catalog=catalog)
+        _ap, _ad = _active_provider_info(cfg)
+        gold_store = GoldStore(sa_url, embedder, catalog=catalog,
+                                 active_provider=_ap, active_dialect=_ad)
         conv_store = ConversationStore(sa_url)
         conv_store.ensure_schema()
     except Exception as e:
@@ -610,7 +618,9 @@ def gold_init() -> None:
     cfg = load_config()
     embedder = build_embedding(cfg.embedding_provider())
     sa_url = _metadata_sa_url(cfg)
-    store = GoldStore(sa_url, embedder)
+    _ap, _ad = _active_provider_info(cfg)
+    store = GoldStore(sa_url, embedder,
+                       active_provider=_ap, active_dialect=_ad)
     store.ensure_schema()
     typer.echo(f"gold_sql schema ensured ({sa_url}).")
 
@@ -638,7 +648,9 @@ def gold_seed(
     catalog_path = REPO_ROOT / "data/artifacts/table_catalog.json"
     catalog = load_table_catalog(catalog_path) if catalog_path.exists() else None
     sa_url = _metadata_sa_url(cfg)
-    store = GoldStore(sa_url, embedder, catalog=catalog)
+    _ap, _ad = _active_provider_info(cfg)
+    store = GoldStore(sa_url, embedder, catalog=catalog,
+                       active_provider=_ap, active_dialect=_ad)
     if drop_existing:
         store.drop_schema()
     store.ensure_schema()
@@ -698,7 +710,9 @@ def gold_search(
     catalog_path = REPO_ROOT / "data/artifacts/table_catalog.json"
     catalog = load_table_catalog(catalog_path) if catalog_path.exists() else None
     sa_url = _metadata_sa_url(cfg)
-    store = GoldStore(sa_url, embedder, catalog=catalog)
+    _ap, _ad = _active_provider_info(cfg)
+    store = GoldStore(sa_url, embedder, catalog=catalog,
+                       active_provider=_ap, active_dialect=_ad)
     domain_list = domains.split(",") if domains else None
     hits = store.retrieve_top_k(query, domains=domain_list, k=k)
     typer.echo(f"\nQuery: {query}")
@@ -720,6 +734,19 @@ def _metadata_sa_url(cfg) -> str:
         f"postgresql+psycopg://{spec['user']}:{password}"
         f"@{spec['host']}:{spec['port']}/{spec['database']}"
     )
+
+
+def _active_provider_info(cfg) -> tuple[str, str]:
+    """Return (active_provider_name, active_dialect) for tagging /
+    scoping per-provider artifacts. Resolves provider kind defensively
+    — a missing entry yields empty strings rather than KeyError."""
+    name = cfg.active_target_provider_name() or ""
+    dialect = ""
+    try:
+        dialect = cfg.target_db_provider().kind
+    except Exception:
+        pass
+    return name, dialect
 
 
 @app.command()
