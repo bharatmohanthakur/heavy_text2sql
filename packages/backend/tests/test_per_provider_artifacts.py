@@ -166,3 +166,100 @@ def test_two_providers_resolve_to_disjoint_paths(tmp_path, monkeypatch):
 def test_active_target_provider_name_returns_target_db_primary():
     cfg = _minimal_cfg(primary="my-northridge")
     assert cfg.active_target_provider_name() == "my-northridge"
+
+
+# ── N2: catalog persistence with provider provenance ───────────────────────
+
+
+def _minimal_catalog(*, provider: str = "", dialect: str = "") -> "TableCatalog":
+    from text2sql.table_catalog import TableCatalog
+
+    return TableCatalog(
+        data_standard_version="6.1.0",
+        generated_at="2026-04-29T00:00:00Z",
+        entries=[],
+        descriptor_codes=[],
+        provider_name=provider,
+        target_dialect=dialect,
+    )
+
+
+def test_catalog_save_load_round_trip_preserves_provider(tmp_path):
+    """Round-trip: provider_name + target_dialect survive save/load."""
+    from text2sql.table_catalog import load_table_catalog, save_table_catalog
+
+    cat = _minimal_catalog(provider="prod-mssql", dialect="mssql")
+    p = tmp_path / "table_catalog.json"
+    save_table_catalog(cat, p)
+    loaded = load_table_catalog(p)
+    assert loaded.provider_name == "prod-mssql"
+    assert loaded.target_dialect == "mssql"
+
+
+def test_catalog_load_legacy_file_yields_empty_provider(tmp_path):
+    """A pre-N2 catalog has no provider_name/target_dialect keys. Reader
+    must tolerate (empty strings) for backwards compat."""
+    from text2sql.table_catalog import load_table_catalog
+
+    legacy = {
+        "data_standard_version": "6.1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "entry_count": 0,
+        "descriptor_code_count": 0,
+        "domain_counts": {},
+        "entries": [],
+        "descriptor_codes": [],
+    }
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps(legacy))
+    loaded = load_table_catalog(p)
+    assert loaded.provider_name == ""
+    assert loaded.target_dialect == ""
+
+
+def test_catalog_load_with_expected_provider_raises_on_mismatch(tmp_path):
+    """The mismatch guard prevents using one provider's catalog against
+    another's live DB — exactly the silent data-quality bug N1/N2 exists
+    to prevent."""
+    from text2sql.table_catalog import load_table_catalog, save_table_catalog
+
+    cat = _minimal_catalog(provider="prod-mssql", dialect="mssql")
+    p = tmp_path / "table_catalog.json"
+    save_table_catalog(cat, p)
+
+    with pytest.raises(RuntimeError) as ei:
+        load_table_catalog(p, expected_provider="my-sqlite-demo")
+    msg = str(ei.value)
+    assert "prod-mssql" in msg
+    assert "my-sqlite-demo" in msg
+    # The error tells the user exactly how to fix it
+    assert "rebuild --provider" in msg
+
+
+def test_catalog_load_with_expected_provider_passes_when_matching(tmp_path):
+    from text2sql.table_catalog import load_table_catalog, save_table_catalog
+
+    cat = _minimal_catalog(provider="prod-mssql", dialect="mssql")
+    p = tmp_path / "table_catalog.json"
+    save_table_catalog(cat, p)
+
+    loaded = load_table_catalog(p, expected_provider="prod-mssql")
+    assert loaded.provider_name == "prod-mssql"
+
+
+def test_catalog_load_with_expected_provider_passes_for_legacy_unset(tmp_path):
+    """If the on-disk catalog has no provider_name (pre-N2), don't break
+    legacy flat-layout users by raising on every load."""
+    from text2sql.table_catalog import load_table_catalog
+
+    legacy = {
+        "data_standard_version": "6.1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "entry_count": 0, "descriptor_code_count": 0,
+        "domain_counts": {}, "entries": [], "descriptor_codes": [],
+    }
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps(legacy))
+
+    loaded = load_table_catalog(p, expected_provider="anyone")
+    assert loaded.provider_name == ""

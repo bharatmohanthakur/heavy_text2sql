@@ -122,6 +122,11 @@ class TableCatalog:
     generated_at: str
     entries: list[TableEntry]
     descriptor_codes: list["DescriptorCode"] = field(default_factory=list)
+    # Per-provider provenance (N2). When absent (legacy flat catalogs),
+    # both fields are empty strings — readers tolerate that for backwards
+    # compat. New writes always populate both.
+    provider_name: str = ""
+    target_dialect: str = ""
 
     def by_fqn(self) -> dict[str, TableEntry]:
         return {e.fqn: e for e in self.entries}
@@ -269,6 +274,7 @@ def build_table_catalog(
     sample_row_count: int = DEFAULT_SAMPLE_ROW_COUNT,
     low_card_threshold: int = DEFAULT_LOW_CARD_THRESHOLD,
     only_fqns: set[str] | None = None,
+    provider_name: str = "",
 ) -> TableCatalog:
     """Build the catalog. One record per table."""
     cls_by_fqn = {c.fqn: c for c in classifications}
@@ -430,6 +436,8 @@ def build_table_catalog(
         generated_at=datetime.now(tz=timezone.utc).isoformat(),
         entries=entries,
         descriptor_codes=descriptor_codes,
+        provider_name=provider_name,
+        target_dialect=(sql_engine.dialect if sql_engine is not None else ""),
     )
     return catalog
 
@@ -494,6 +502,8 @@ def save_table_catalog(catalog: TableCatalog, path: Path) -> None:
     payload = {
         "data_standard_version": catalog.data_standard_version,
         "generated_at": catalog.generated_at,
+        "provider_name": catalog.provider_name,
+        "target_dialect": catalog.target_dialect,
         "entry_count": len(catalog.entries),
         "descriptor_code_count": len(catalog.descriptor_codes),
         "domain_counts": catalog.domain_counts(),
@@ -503,8 +513,22 @@ def save_table_catalog(catalog: TableCatalog, path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2, default=str, sort_keys=True))
 
 
-def load_table_catalog(path: Path) -> TableCatalog:
+def load_table_catalog(
+    path: Path,
+    *,
+    expected_provider: str | None = None,
+) -> TableCatalog:
+    """Load a catalog. If `expected_provider` is given, raises a clear
+    error when the manifest's provider_name doesn't match — prevents
+    silently using one provider's catalog against another's live DB."""
     raw = json.loads(path.read_text())
+    provider_name = raw.get("provider_name", "")
+    if expected_provider and provider_name and provider_name != expected_provider:
+        raise RuntimeError(
+            f"catalog at {path} was built for provider {provider_name!r}, "
+            f"but active provider is {expected_provider!r}. Run "
+            f"`text2sql rebuild --provider {expected_provider}` to refresh."
+        )
     entries = [
         TableEntry(
             **{**e, "columns": [ColumnInfo(**c) for c in e["columns"]]}
@@ -517,4 +541,6 @@ def load_table_catalog(path: Path) -> TableCatalog:
         generated_at=raw["generated_at"],
         entries=entries,
         descriptor_codes=descriptor_codes,
+        provider_name=provider_name,
+        target_dialect=raw.get("target_dialect", ""),
     )
