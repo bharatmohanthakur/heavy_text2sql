@@ -134,3 +134,43 @@ def test_patch_rejects_overlay_that_invalidates_config(client):
     # Pydantic validation should reject this since the provider isn't in
     # the providers map.
     assert r.status_code in (400, 422), r.text
+
+
+# ── /admin/test_metadata_db — multi-dialect (O4) ───────────────────────────
+
+
+def test_test_metadata_db_succeeds_for_sqlite_overlay(tmp_path, client):
+    """Overlay metadata_db kind=sqlite + a tmp file path; the multi-
+    dialect endpoint must connect, run sqlite_version(), and return ok."""
+    db_path = tmp_path / "metadata.sqlite"
+    # Write the overlay directly to the path the fixture monkeypatched.
+    import text2sql.api.admin as admin_mod
+    overlay_path = Path(admin_mod.RUNTIME_OVERRIDES_PATH)
+    overlay_path.write_text(json.dumps({
+        "metadata_db": {"kind": "sqlite", "path": str(db_path)},
+    }, indent=2))
+
+    r = client.post("/admin/test_metadata_db")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True, body
+    assert body["server_version"].startswith("SQLite ")
+    assert body["elapsed_ms"] is not None and body["elapsed_ms"] > 0
+    # SQLite on-the-fly creates the file on first connection
+    assert db_path.exists()
+
+
+def test_test_metadata_db_reports_sqlite_missing_path_clearly(client):
+    """Misconfigured overlay (sqlite kind but no path) should not crash —
+    the endpoint must respond 200 with ok=false + a useful error string."""
+    import text2sql.api.admin as admin_mod
+    overlay_path = Path(admin_mod.RUNTIME_OVERRIDES_PATH)
+    overlay_path.write_text(json.dumps({
+        "metadata_db": {"kind": "sqlite"},  # no path
+    }, indent=2))
+
+    r = client.post("/admin/test_metadata_db")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert "path" in (body["error"] or "").lower()

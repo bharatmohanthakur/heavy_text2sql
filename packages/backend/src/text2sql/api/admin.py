@@ -442,25 +442,34 @@ async def stream_job(job_id: str) -> StreamingResponse:
 
 @router.post("/test_metadata_db", response_model=_DbTestResponse)
 def test_metadata_db() -> _DbTestResponse:
-    """Probe the configured metadata DB (Postgres) — gold store +
-    conversations live here."""
+    """Probe the configured metadata DB. Supports all three kinds the
+    platform allows for metadata: postgresql / mssql / sqlite. The
+    dialect-specific URL builder lives in config so cli + admin agree."""
     import time
+    from text2sql.config import metadata_sa_url
+
     cfg = load_config()
-    spec = cfg.metadata_db.model_dump()
-    pw = os.environ.get(spec.get("password_env") or "") if spec.get("password_env") else ""
-    pw = pw or os.environ.get("METADATA_DB_PASSWORD") or os.environ.get("TARGET_DB_PASSWORD") or "edfi"
-    url = (
-        f"postgresql+psycopg://{spec['user']}:{pw}"
-        f"@{spec['host']}:{spec['port']}/{spec['database']}"
-    )
+    kind = cfg.metadata_db.model_dump().get("kind", "postgresql")
     t0 = time.perf_counter()
     try:
+        url = metadata_sa_url(cfg)
         engine = sa.create_engine(url, future=True)
         with engine.connect() as conn:
-            row = conn.execute(sa.text("SELECT version() AS v")).mappings().first()
+            if kind == "postgresql":
+                row = conn.execute(sa.text("SELECT version() AS v")).mappings().first()
+                version = str((row or {}).get("v") or "")[:200]
+            elif kind == "mssql":
+                row = conn.execute(sa.text("SELECT @@VERSION AS v")).mappings().first()
+                version = str((row or {}).get("v") or "")[:200]
+            elif kind == "sqlite":
+                row = conn.execute(sa.text("SELECT sqlite_version() AS v")).mappings().first()
+                version = f"SQLite {str((row or {}).get('v') or '')}"[:200]
+            else:
+                row = conn.execute(sa.text("SELECT 1 AS v")).mappings().first()
+                version = ""
         return _DbTestResponse(ok=True,
                                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
-                               server_version=str((row or {}).get("v") or "")[:200])
+                               server_version=version)
     except Exception as e:
         return _DbTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
                                elapsed_ms=(time.perf_counter() - t0) * 1000.0)

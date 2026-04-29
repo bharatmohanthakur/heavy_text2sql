@@ -65,8 +65,9 @@ export default function SettingsPage() {
 
       <div className="border border-border rounded-lg p-4 bg-panel/40">
         <div className="text-xs text-muted">Active selections</div>
-        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
           <ActiveBadge label="Target DB" value={config.target_db.primary} />
+          <ActiveBadge label="Metadata DB" value={String(config.metadata_db?.kind ?? "—")} />
           <ActiveBadge label="LLM" value={config.llm.primary} />
           <ActiveBadge label="Embedding" value={config.embeddings.primary} />
           <ActiveBadge label="Vector store" value={config.vector_store.primary} />
@@ -74,6 +75,7 @@ export default function SettingsPage() {
       </div>
 
       <DatabaseConnectorForm config={config} onSaved={refresh} />
+      <MetadataDatabaseCard config={config} />
       <LLMConnectorForm config={config} onSaved={refresh} />
       <EmbeddingConnectorForm config={config} onSaved={refresh} />
       <RebuildPanel />
@@ -231,6 +233,107 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
         save={save}
       />
     </FormCard>
+  );
+}
+
+// ── Metadata DB (gold + conversations) ─────────────────────────────────
+
+function MetadataDatabaseCard({ config }: { config: AdminConfig }) {
+  const meta = (config.metadata_db ?? {}) as Record<string, unknown>;
+  const kind = String(meta.kind ?? "");
+  const [test, setTest] = useState<TestState>({ pending: false });
+
+  async function runTest() {
+    setTest({ pending: true });
+    try {
+      const r = await api.adminTestMetadataDb();
+      setTest({
+        pending: false,
+        ok: r.ok,
+        error: r.error || undefined,
+        elapsed_ms: r.elapsed_ms ?? undefined,
+        detail: r.server_version || undefined,
+      });
+    } catch (e) {
+      setTest({ pending: false, ok: false, error: String(e) });
+    }
+  }
+
+  // Render the right body for each kind. Always read-only — switching
+  // metadata kind moves gold + conversations out from under live data,
+  // so we don't expose it as a one-click UI action.
+  function renderSpec() {
+    if (kind === "sqlite") {
+      return (
+        <div className="text-sm space-y-1">
+          <Row label="Path" value={String(meta.path ?? "")} mono />
+          <p className="text-xs text-muted">
+            Single SQLite file holding gold queries + conversation history.
+            Ideal for the zero-infra single-user demo.
+          </p>
+        </div>
+      );
+    }
+    if (kind === "mssql" || kind === "postgresql") {
+      return (
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Row label="Host" value={String(meta.host ?? "")} mono />
+          <Row label="Port" value={String(meta.port ?? "")} mono />
+          <Row label="Database" value={String(meta.database ?? "")} mono />
+          <Row label="User" value={String(meta.user ?? "")} mono />
+        </div>
+      );
+    }
+    return (
+      <div className="text-xs text-muted">
+        Unknown metadata DB kind: {kind || "(unset)"}
+      </div>
+    );
+  }
+
+  return (
+    <FormCard
+      title="Metadata database"
+      subtitle="Stores gold SQL + conversation history. Independent of the target DB; supports postgresql / mssql / sqlite. Read-only here — switch by editing the YAML or runtime overlay."
+    >
+      <div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-3 items-start">
+        <div>
+          <div className="text-xs text-muted">Kind</div>
+          <div className="font-mono text-sm text-accent">{kind || "(unset)"}</div>
+        </div>
+        <div>{renderSpec()}</div>
+      </div>
+
+      <div className="mt-4 flex items-center gap-3 text-sm">
+        <button
+          onClick={runTest}
+          disabled={test.pending}
+          className="border border-border rounded px-3 py-1 hover:border-accent hover:text-accent disabled:opacity-50"
+        >
+          {test.pending ? "Testing…" : "Test connection"}
+        </button>
+        {!test.pending && test.ok === true && (
+          <span className="text-emerald-400 text-xs">
+            ok · {test.elapsed_ms?.toFixed(0)} ms
+            {test.detail && ` · ${test.detail.slice(0, 90)}`}
+          </span>
+        )}
+        {!test.pending && test.ok === false && (
+          <span className="text-red-400 text-xs whitespace-pre-wrap">
+            {test.error}
+          </span>
+        )}
+      </div>
+    </FormCard>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <div className="text-xs text-muted">{label}</div>
+      <div className={mono ? "font-mono text-sm" : "text-sm"}>{value || "—"}</div>
+    </div>
   );
 }
 

@@ -725,51 +725,11 @@ def gold_search(
 
 
 def _metadata_sa_url(cfg) -> str:
-    """Derive an SQLAlchemy URL for the metadata DB.
-
-    Branches on metadata_db.kind:
-      - postgresql → postgresql+psycopg://user:pw@host:port/db
-      - mssql      → mssql+pymssql://user:pw@host:port/db?tds_version=7.4
-      - sqlite     → sqlite:///<abs path>     (repo-relative resolves via REPO_ROOT)
-
-    SQLite is the zero-infra story: pair a SQLite target_db with a
-    SQLite metadata_db and the whole platform runs out of a single
-    folder of files — no Docker, no Postgres, no MSSQL.
-    """
-    import os
-    from text2sql.config import REPO_ROOT
-
-    spec = cfg.metadata_db.model_dump()
-    kind = spec.get("kind", "postgresql")
-
-    if kind == "sqlite":
-        path = (spec.get("path") or "").strip()
-        if not path:
-            raise RuntimeError(
-                "metadata_db kind=sqlite requires a `path` field in the config"
-            )
-        if path != ":memory:" and not os.path.isabs(path):
-            path = str(REPO_ROOT / path)
-        return f"sqlite:///{path}"
-
-    pw_env = spec.get("password_env")
-    password = os.environ.get(pw_env or "", "")
-    user = spec.get("user", "")
-    host = spec.get("host", "127.0.0.1")
-    port = int(spec.get("port") or (5432 if kind == "postgresql" else 1433))
-    database = spec.get("database", "")
-
-    if kind == "mssql":
-        return (
-            f"mssql+pymssql://{user}:{password}"
-            f"@{host}:{port}/{database}?tds_version=7.4"
-        )
-    if kind == "postgresql":
-        return (
-            f"postgresql+psycopg://{user}:{password}"
-            f"@{host}:{port}/{database}"
-        )
-    raise RuntimeError(f"unknown metadata_db kind: {kind!r}")
+    """Thin alias kept for tests and existing call-sites. Real logic lives
+    in `text2sql.config.metadata_sa_url` so admin endpoints can import it
+    without pulling Typer + the rest of the CLI module."""
+    from text2sql.config import metadata_sa_url
+    return metadata_sa_url(cfg)
 
 
 def _active_provider_info(cfg) -> tuple[str, str]:
