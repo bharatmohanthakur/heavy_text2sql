@@ -59,6 +59,17 @@ class GoldSqlRow(_Base):
                         default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
 
+    # Per-provider scoping (N4). target_provider is the target_db.primary
+    # at the time this gold pair was authored — gold retrieval at query
+    # time MUST filter by the active provider so a Postgres-flavored gold
+    # SQL doesn't steer the LLM to write Postgres syntax against MSSQL.
+    # dialect is denormalized for fast filter / display (mssql / postgresql
+    # / sqlite). source_gold_id links a row promoted across providers
+    # back to its origin so the curator can see the lineage.
+    target_provider = Column(String(128), nullable=False, default="")
+    dialect = Column(String(32), nullable=False, default="")
+    source_gold_id = Column(UUID(as_uuid=True), nullable=True)
+
 
 @dataclass
 class GoldRecord:
@@ -80,6 +91,10 @@ class GoldRecord:
     updated_at: datetime | None = None
     approved_at: datetime | None = None
     exec_check_at: datetime | None = None
+    # Per-provider scoping (N4)
+    target_provider: str = ""
+    dialect: str = ""
+    source_gold_id: uuid.UUID | None = None
 
     @classmethod
     def from_row(cls, row: GoldSqlRow) -> "GoldRecord":
@@ -101,6 +116,9 @@ class GoldRecord:
             approved_at=row.approved_at,
             exec_check_at=row.exec_check_at,
             exec_check_passed=row.exec_check_passed,
+            target_provider=row.target_provider or "",
+            dialect=row.dialect or "",
+            source_gold_id=row.source_gold_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,4 +135,7 @@ class GoldRecord:
             "approved_by": self.approved_by,
             "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "target_provider": self.target_provider,
+            "dialect": self.dialect,
+            "source_gold_id": str(self.source_gold_id) if self.source_gold_id else None,
         }

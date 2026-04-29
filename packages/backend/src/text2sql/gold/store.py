@@ -62,11 +62,21 @@ class GoldStore:
         embedder: EmbeddingProvider,
         *,
         catalog=None,
+        active_provider: str = "",
+        active_dialect: str = "",
     ) -> None:
+        """`active_provider` and `active_dialect` (N4) tag every NEWLY
+        created row and become the default scope for retrieval. They
+        come from cfg.target_db.primary + cfg.target_db_provider().kind
+        at server startup. Existing rows with non-matching scope are
+        invisible to retrieval — gold authored against MSSQL won't steer
+        SQLite queries to write `TOP 50` syntax."""
         self._engine = sa.create_engine(sa_url, future=True, pool_pre_ping=True)
         self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
         self._embedder = embedder
         self._catalog = catalog
+        self._active_provider = active_provider
+        self._active_dialect = active_dialect
 
     # ── Schema management ────────────────────────────────────────────────────
 
@@ -87,6 +97,9 @@ class GoldStore:
         author: str = "",
         approval_status: str = "pending",
         note: str = "",
+        target_provider: str | None = None,
+        dialect: str | None = None,
+        source_gold_id: uuid.UUID | None = None,
     ) -> GoldRecord:
         ast_flat = flatten_sql_ast(sql_text)
         nl_vec = self._embedder.embed([nl_question], kind="doc")[0].tolist()
@@ -105,6 +118,10 @@ class GoldStore:
                 author=author,
                 approval_status=approval_status,
                 note=note,
+                target_provider=(target_provider if target_provider is not None
+                                  else self._active_provider),
+                dialect=(dialect if dialect is not None else self._active_dialect),
+                source_gold_id=source_gold_id,
             )
             session.add(row)
             session.flush()
@@ -174,13 +191,29 @@ class GoldStore:
         *,
         approval_status: str | None = None,
         domain: str | None = None,
+        target_provider: str | None = None,
+        all_providers: bool = False,
         limit: int = 100,
     ) -> list[GoldRecord]:
+        """List gold rows. By default, scoped to `active_provider` (the
+        server's current target). Pass `all_providers=True` for the
+        admin / Gold Studio cross-provider view. Pass an explicit
+        `target_provider` to scope to a non-active one."""
         stmt = sa.select(GoldSqlRow)
         if approval_status:
             stmt = stmt.where(GoldSqlRow.approval_status == approval_status)
         if domain:
             stmt = stmt.where(GoldSqlRow.domains_used.any(domain))
+        if not all_providers:
+            scope = (target_provider if target_provider is not None
+                     else self._active_provider)
+            if scope:
+                # Tolerate legacy untagged rows so in-place upgrades don't
+                # hide every pre-N4 gold pair until somebody back-tags them.
+                stmt = stmt.where(sa.or_(
+                    GoldSqlRow.target_provider == scope,
+                    GoldSqlRow.target_provider == "",
+                ))
         stmt = stmt.order_by(GoldSqlRow.created_at.desc()).limit(limit)
         with self._Session() as session:
             return [GoldRecord.from_row(r) for r in session.scalars(stmt)]
@@ -203,12 +236,23 @@ class GoldStore:
         k: int = 3,
         approved_only: bool = True,
         domain_overlap_boost: float = 0.15,
+        all_providers: bool = False,
     ) -> list[GoldHit]:
-        """NL-vector cosine + small domain-overlap boost. Returns top-K."""
+        """NL-vector cosine + small domain-overlap boost. Returns top-K.
+
+        Scoped to `active_provider` by default — gold authored for a
+        different DB dialect would steer the LLM toward syntax that
+        won't execute against the active engine. `all_providers=True`
+        is reserved for admin / debugging views, never the pipeline."""
         with self._Session() as session:
             stmt = sa.select(GoldSqlRow)
             if approved_only:
                 stmt = stmt.where(GoldSqlRow.approval_status == "approved")
+            if not all_providers and self._active_provider:
+                stmt = stmt.where(sa.or_(
+                    GoldSqlRow.target_provider == self._active_provider,
+                    GoldSqlRow.target_provider == "",
+                ))
             rows = list(session.scalars(stmt))
         if not rows:
             return []
