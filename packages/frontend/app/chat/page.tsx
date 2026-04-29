@@ -268,12 +268,15 @@ export default function ChatPage() {
             <button
               key={c.id}
               onClick={() => loadConversation(c.id)}
-              className={`w-full text-left text-xs border rounded px-2 py-2 truncate ${
+              className={`w-full text-left text-xs border rounded px-2 py-2 ${
                 c.id === convId ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
               }`}
-              title={c.title}
+              title={c.dialect ? `${c.title} · ${c.dialect}` : c.title}
             >
-              {c.title || "(untitled)"}
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate flex-1">{c.title || "(untitled)"}</span>
+                {c.dialect && <DialectBadge dialect={c.dialect} />}
+              </div>
             </button>
           ))}
         </div>
@@ -319,6 +322,20 @@ export default function ChatPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function DialectBadge({ dialect }: { dialect: string }) {
+  const palette: Record<string, string> = {
+    mssql: "border-blue-500 text-blue-400",
+    sqlite: "border-emerald-500 text-emerald-400",
+    postgresql: "border-cyan-500 text-cyan-400",
+  };
+  const klass = palette[dialect] ?? "border-border text-muted";
+  return (
+    <span className={`shrink-0 text-[10px] uppercase tracking-wide border rounded px-1 py-px ${klass}`}>
+      {dialect}
+    </span>
   );
 }
 

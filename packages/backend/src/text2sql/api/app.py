@@ -291,6 +291,7 @@ def build_app(
                     {
                         "id": str(c.id),
                         "title": c.title,
+                        "dialect": c.dialect,
                         "created_at": c.created_at.isoformat(),
                         "last_active": c.last_active.isoformat(),
                     }
@@ -307,6 +308,7 @@ def build_app(
             return {
                 "id": str(c.id),
                 "title": c.title,
+                "dialect": c.dialect,
                 "created_at": c.created_at.isoformat(),
                 "last_active": c.last_active.isoformat(),
                 "messages": [

@@ -306,6 +306,7 @@ export async function streamJob(
 export type ConversationSummary = {
   id: string;
   title: string;
+  dialect: string;
   created_at: string;
   last_active: string;
 };
