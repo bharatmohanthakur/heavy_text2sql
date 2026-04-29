@@ -1,12 +1,17 @@
-"""Postgres-backed conversation history.
+"""Cross-dialect conversation history.
 
-Two tables in `text2sql_meta`:
+Two tables in the metadata DB (Postgres / MSSQL / SQLite, all supported):
 
   conversation
-    id           UUID  PK
-    title        text  (auto-summary or user-set)
-    created_at   timestamptz
-    last_active  timestamptz
+    id            UUID  PK              (TEXT-stored on SQLite, native on PG/MSSQL)
+    title         text  (auto-summary or user-set)
+    dialect       text  (the target_db kind at conversation creation time —
+                         lets the chat list badge old conversations as
+                         MSSQL / SQLite / Postgres so users notice when
+                         tool history references a dialect that no longer
+                         matches the active target)
+    created_at    timestamptz
+    last_active   timestamptz
 
   conversation_message
     id              UUID PK
@@ -14,13 +19,17 @@ Two tables in `text2sql_meta`:
     seq             int    (monotonic per conversation)
     role            text   (user | assistant | tool)
     content         text   (assistant/user free text; tool: JSON result)
-    tool_calls      JSONB  (assistant turns that called tools; null otherwise)
+    tool_calls      JSON   (assistant turns that called tools; null otherwise —
+                            JSONB on Postgres for GIN indexability, plain
+                            JSON-as-TEXT on SQLite/MSSQL)
     tool_call_id    text   (only on tool messages, ties result to a call)
     tool_name       text   (only on tool messages)
     created_at      timestamptz
 
-The store is the single source of truth for a conversation; every agent turn
-reads history from here, calls the LLM, persists assistant + tool messages.
+Type strategy: SA 2.0's `sa.Uuid` is dialect-aware (native UUID on
+Postgres, CHAR(32) on SQLite/MSSQL, value-type stays uuid.UUID).
+`sa.JSON.with_variant(JSONB, "postgresql")` keeps Postgres's GIN-index
+performance while staying portable to SQLite (TEXT) and MSSQL (NVARCHAR).
 """
 
 from __future__ import annotations
@@ -32,15 +41,20 @@ from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import (
-    JSON,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+
+# Dialect-aware column types — Postgres gets the native fast path; other
+# dialects fall back to portable TEXT-backed equivalents.
+_UUIDType = sa.Uuid(as_uuid=True)                                    # SA 2.0 cross-dialect
+_JSONType = sa.JSON().with_variant(JSONB(), "postgresql")            # JSONB on PG, JSON elsewhere
 
 
 class _Base(DeclarativeBase):
@@ -50,8 +64,11 @@ class _Base(DeclarativeBase):
 class ConversationRow(_Base):
     __tablename__ = "conversation"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = sa.Column(_UUIDType, primary_key=True, default=uuid.uuid4)
     title = sa.Column(Text, nullable=False, default="")
+    # Per-target-DB dialect at creation time (O1). Empty string for legacy
+    # rows written before this column existed; readers tolerate.
+    dialect = sa.Column(String(32), nullable=False, default="")
     created_at = sa.Column(
         DateTime(timezone=True), nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -66,16 +83,16 @@ class ConversationRow(_Base):
 class ConversationMessageRow(_Base):
     __tablename__ = "conversation_message"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = sa.Column(_UUIDType, primary_key=True, default=uuid.uuid4)
     conversation_id = sa.Column(
-        UUID(as_uuid=True),
+        _UUIDType,
         ForeignKey("conversation.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
     seq = sa.Column(Integer, nullable=False)
     role = sa.Column(String(16), nullable=False)
     content = sa.Column(Text, nullable=False, default="")
-    tool_calls = sa.Column(JSONB, nullable=True)
+    tool_calls = sa.Column(_JSONType, nullable=True)
     tool_call_id = sa.Column(String(64), nullable=True)
     tool_name = sa.Column(String(64), nullable=True)
     created_at = sa.Column(
@@ -97,12 +114,14 @@ class Conversation:
     title: str
     created_at: datetime
     last_active: datetime
+    dialect: str = ""
 
     @classmethod
     def from_row(cls, r: ConversationRow) -> "Conversation":
         return cls(
             id=r.id, title=r.title or "",
             created_at=r.created_at, last_active=r.last_active,
+            dialect=getattr(r, "dialect", "") or "",
         )
 
 
@@ -174,9 +193,14 @@ class ConversationStore:
 
     # ── Conversation CRUD ────────────────────────────────────────────────────
 
-    def create_conversation(self, title: str = "") -> Conversation:
+    def create_conversation(
+        self, title: str = "", *, dialect: str = "",
+    ) -> Conversation:
+        """Create a new conversation. `dialect` (O1) records the
+        target_db.kind at creation time so the chat list can badge old
+        conversations when the active target later changes."""
         with self._Session.begin() as s:
-            row = ConversationRow(title=title)
+            row = ConversationRow(title=title, dialect=dialect)
             s.add(row)
             s.flush()
             return Conversation.from_row(row)

@@ -913,13 +913,25 @@ class AgentRunner:
         user_message: str,
     ) -> Iterator[dict[str, Any]]:
         t_start = time.perf_counter()
-        # 1. Establish conversation
+        # 1. Establish conversation. Tag with the active engine dialect
+        # so the chat list can badge old conversations when the active
+        # target later flips (Postgres → SQLite, etc).
+        active_dialect = ""
+        try:
+            if self.tool_ctx.sql_engine is not None:
+                active_dialect = self.tool_ctx.sql_engine.dialect
+        except Exception:
+            pass
         if conversation_id is None:
-            conv = self.conv_store.create_conversation(title=user_message[:80])
+            conv = self.conv_store.create_conversation(
+                title=user_message[:80], dialect=active_dialect,
+            )
             conversation_id = conv.id
         else:
             if self.conv_store.get_conversation(conversation_id) is None:
-                conv = self.conv_store.create_conversation(title=user_message[:80])
+                conv = self.conv_store.create_conversation(
+                    title=user_message[:80], dialect=active_dialect,
+                )
                 conversation_id = conv.id
         yield {"kind": "conversation_id", "id": conversation_id}
 
