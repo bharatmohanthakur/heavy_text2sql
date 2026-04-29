@@ -263,3 +263,106 @@ def test_catalog_load_with_expected_provider_passes_for_legacy_unset(tmp_path):
 
     loaded = load_table_catalog(p, expected_provider="anyone")
     assert loaded.provider_name == ""
+
+
+# ── N3: FK graph persistence with provider provenance ─────────────────────
+
+
+def _tiny_graph_with_apsp():
+    """Build a 2-node FK graph + APSP for round-trip tests. Uses the
+    real builder so any persistence regression surfaces."""
+    import numpy as np
+    from text2sql.graph.builder import (
+        FKEdge, FKGraph, TableMeta, _LogicalEdge,
+    )
+    import rustworkx as rx
+
+    nodes = ["edfi.A", "edfi.B"]
+    node_index = {"edfi.A": 0, "edfi.B": 1}
+    meta = {
+        "edfi.A": TableMeta(fqn="edfi.A", is_descriptor=False,
+                             is_association=False, is_extension=False,
+                             primary_domain="X", aggregate_root="edfi.A"),
+        "edfi.B": TableMeta(fqn="edfi.B", is_descriptor=False,
+                             is_association=False, is_extension=False,
+                             primary_domain="X", aggregate_root="edfi.B"),
+    }
+    rx_graph = rx.PyGraph(multigraph=False)
+    rx_graph.add_nodes_from(nodes)
+    fk = FKEdge(src_schema="edfi", src_table="A",
+                  dst_schema="edfi", dst_table="B",
+                  constraint_name="fk_a_b",
+                  column_pairs=(("AId", "AId"),))
+    edges = {(0, 1): _LogicalEdge(a="edfi.A", b="edfi.B", weight=1.0, fks=[fk])}
+    rx_graph.add_edge(0, 1, 1.0)
+    g = FKGraph(nodes=nodes, node_index=node_index, meta=meta,
+                  edges=edges, rx_graph=rx_graph)
+    g.compute_apsp()
+    return g
+
+
+def test_graph_save_load_round_trip_preserves_provider(tmp_path):
+    from text2sql.graph.builder import load_graph, save_graph
+
+    g = _tiny_graph_with_apsp()
+    save_graph(g, tmp_path, provider_name="prod-pg", target_dialect="postgresql")
+    loaded = load_graph(tmp_path)
+    assert loaded.provider_name == "prod-pg"
+    assert loaded.target_dialect == "postgresql"
+    # Sanity: structural fields round-tripped too
+    assert loaded.nodes == g.nodes
+    assert (0, 1) in loaded.edges
+
+
+def test_graph_load_legacy_payload_yields_empty_provider(tmp_path):
+    """A legacy graph.msgpack written by pre-N3 code has no
+    provider_name/target_dialect keys. Load must tolerate."""
+    from text2sql.graph.builder import save_graph, load_graph
+    import msgpack
+
+    g = _tiny_graph_with_apsp()
+    save_graph(g, tmp_path)  # provider_name="" — same as legacy
+    # Verify the on-disk payload doesn't carry a non-empty provider tag
+    raw = msgpack.unpackb((tmp_path / "graph.msgpack").read_bytes(), raw=False)
+    assert raw["provider_name"] == ""
+
+    loaded = load_graph(tmp_path)
+    assert loaded.provider_name == ""
+    assert loaded.target_dialect == ""
+
+
+def test_graph_load_with_expected_provider_raises_on_mismatch(tmp_path):
+    """The mismatch guard prevents using one provider's graph against
+    another's catalog/live DB."""
+    from text2sql.graph.builder import load_graph, save_graph
+
+    g = _tiny_graph_with_apsp()
+    save_graph(g, tmp_path, provider_name="prod-mssql", target_dialect="mssql")
+
+    with pytest.raises(RuntimeError) as ei:
+        load_graph(tmp_path, expected_provider="my-sqlite-demo")
+    msg = str(ei.value)
+    assert "prod-mssql" in msg
+    assert "my-sqlite-demo" in msg
+    assert "rebuild --provider" in msg
+
+
+def test_graph_load_with_expected_provider_passes_when_matching(tmp_path):
+    from text2sql.graph.builder import load_graph, save_graph
+
+    g = _tiny_graph_with_apsp()
+    save_graph(g, tmp_path, provider_name="prod", target_dialect="postgresql")
+    loaded = load_graph(tmp_path, expected_provider="prod")
+    assert loaded.provider_name == "prod"
+
+
+def test_graph_load_legacy_passes_any_expected_provider(tmp_path):
+    """Don't break in-place upgrades: legacy graph (provider_name=='')
+    matches any expected_provider so existing single-target deployments
+    keep working until the next rebuild."""
+    from text2sql.graph.builder import load_graph, save_graph
+
+    g = _tiny_graph_with_apsp()
+    save_graph(g, tmp_path)  # provider_name=""
+    loaded = load_graph(tmp_path, expected_provider="anyone")
+    assert loaded.provider_name == ""

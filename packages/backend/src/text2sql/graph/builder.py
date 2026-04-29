@@ -81,6 +81,10 @@ class FKGraph:
     rx_graph: rx.PyGraph                # undirected
     dist: np.ndarray | None = None      # n × n float32
     next_hop: np.ndarray | None = None  # n × n int32 (next node id along path)
+    # Per-provider provenance (N3) — populated by save() / load(). Empty
+    # for graphs built via the legacy single-target CLI path.
+    provider_name: str = ""
+    target_dialect: str = ""
 
     # ── construction helpers ───────────────────────────────────────────────────
 
@@ -148,7 +152,17 @@ class FKGraph:
 
     # ── Persistence (mmap-friendly) ───────────────────────────────────────────
 
-    def save(self, dir_: Path) -> None:
+    def save(
+        self,
+        dir_: Path,
+        *,
+        provider_name: str = "",
+        target_dialect: str = "",
+    ) -> None:
+        """Persist graph + APSP to `dir_`. The optional provider tags get
+        embedded in graph.msgpack's payload so a later load can fail loudly
+        on cross-provider mismatch (catalog vs graph from different DBs is
+        a silent data quality bug)."""
         dir_.mkdir(parents=True, exist_ok=True)
         if self.dist is None or self.next_hop is None:
             raise RuntimeError("call compute_apsp() before save()")
@@ -186,12 +200,36 @@ class FKGraph:
             }
             for fqn, m in self.meta.items()
         }
-        payload = {"nodes": self.nodes, "edges": edges_payload, "meta": meta_payload}
+        payload = {
+            "nodes": self.nodes,
+            "edges": edges_payload,
+            "meta": meta_payload,
+            # Per-provider provenance (N3). Empty when the build was kicked
+            # off without an active provider context (legacy CLI path).
+            "provider_name": provider_name,
+            "target_dialect": target_dialect,
+        }
         (dir_ / "graph.msgpack").write_bytes(msgpack.packb(payload, use_bin_type=True))
 
     @classmethod
-    def load(cls, dir_: Path) -> "FKGraph":
+    def load(
+        cls,
+        dir_: Path,
+        *,
+        expected_provider: str | None = None,
+    ) -> "FKGraph":
+        """Load graph + APSP from `dir_`. When `expected_provider` is
+        passed and the on-disk payload's provider_name is non-empty and
+        different, raise — this catches the case where a deployment
+        flipped target_db.primary without rebuilding artifacts."""
         payload = msgpack.unpackb((dir_ / "graph.msgpack").read_bytes(), raw=False)
+        provider_name = payload.get("provider_name", "") or ""
+        if expected_provider and provider_name and provider_name != expected_provider:
+            raise RuntimeError(
+                f"FK graph at {dir_} was built for provider {provider_name!r}, "
+                f"but active provider is {expected_provider!r}. Run "
+                f"`text2sql rebuild --provider {expected_provider}` to refresh."
+            )
         nodes: list[str] = payload["nodes"]
         node_index = {n: i for i, n in enumerate(nodes)}
         meta = {
@@ -218,6 +256,9 @@ class FKGraph:
             nodes=nodes, node_index=node_index, meta=meta,
             edges=edges, rx_graph=rx_graph,
         )
+        # Stash the provenance so callers can introspect it post-load.
+        g.provider_name = provider_name
+        g.target_dialect = payload.get("target_dialect", "") or ""
         dist_path = dir_ / "dist.npy"
         if dist_path.exists():
             g.dist = np.load(dist_path, mmap_mode="r")
@@ -306,9 +347,19 @@ def build_graph(
     return g
 
 
-def save_graph(g: FKGraph, dir_: Path) -> None:
-    g.save(dir_)
+def save_graph(
+    g: FKGraph,
+    dir_: Path,
+    *,
+    provider_name: str = "",
+    target_dialect: str = "",
+) -> None:
+    g.save(dir_, provider_name=provider_name, target_dialect=target_dialect)
 
 
-def load_graph(dir_: Path) -> FKGraph:
-    return FKGraph.load(dir_)
+def load_graph(
+    dir_: Path,
+    *,
+    expected_provider: str | None = None,
+) -> FKGraph:
+    return FKGraph.load(dir_, expected_provider=expected_provider)
