@@ -131,6 +131,62 @@ class AppConfig(BaseModel):
     def target_db_provider(self) -> ProviderEntry:
         return self.target_db.providers[self.target_db.primary]
 
+    # ── Per-provider artifact paths ─────────────────────────────────────────
+    #
+    # Every target_db provider gets its own artifact directory under
+    #   data/artifacts/per_provider/<provider_name>/
+    # holding catalog / classification / FK graph / APSP / FAISS / Steiner
+    # cache / build manifest. This lets one deployment serve multiple
+    # databases (e.g. mssql-azure-prod + my-sqlite-demo) without cross-
+    # contaminating their catalogs, embeddings, or gold SQL.
+    #
+    # Backwards compat: legacy single-target deployments wrote artifacts
+    # flat under data/artifacts/. `resolve_artifact_path` falls back to
+    # the flat layout if the per-provider file is missing AND a flat one
+    # exists — so upgrades don't break in-place. New writes always go to
+    # the per-provider layout.
+
+    def active_target_provider_name(self) -> str:
+        return self.target_db.primary
+
+    def per_provider_artifact_dir(self, provider_name: str | None = None) -> Path:
+        """Directory holding ALL per-provider artifacts. Created on first
+        write; reading code that finds it absent should fall through to
+        flat-layout via `resolve_artifact_path`."""
+        name = provider_name or self.active_target_provider_name()
+        return REPO_ROOT / "data/artifacts/per_provider" / name
+
+
+def resolve_artifact_path(
+    cfg: "AppConfig",
+    filename: str,
+    *,
+    provider_name: str | None = None,
+    write: bool = False,
+) -> Path:
+    """Pick the right path for an artifact file.
+
+    Resolution order:
+      1. data/artifacts/per_provider/<active>/<filename> (preferred)
+      2. data/artifacts/<filename> (backwards-compat for pre-N1 deployments)
+
+    For READS: if the per-provider file exists, return it; else if the
+    flat file exists, return that; else return the per-provider path
+    (caller will see FileNotFoundError, which is the right error).
+
+    For WRITES: always return the per-provider path. Caller is
+    responsible for `mkdir(parents=True, exist_ok=True)`.
+    """
+    per_provider = cfg.per_provider_artifact_dir(provider_name) / filename
+    if write:
+        return per_provider
+    if per_provider.exists():
+        return per_provider
+    flat = REPO_ROOT / "data/artifacts" / filename
+    if flat.exists():
+        return flat
+    return per_provider
+
 
 RUNTIME_OVERRIDES_PATH = REPO_ROOT / "data/artifacts/runtime_overrides.json"
 RUNTIME_SECRETS_PATH = REPO_ROOT / "data/artifacts/runtime_secrets.json"
