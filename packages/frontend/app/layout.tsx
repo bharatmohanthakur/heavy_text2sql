@@ -4,8 +4,8 @@ import Link from "next/link";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 
 export const metadata: Metadata = {
-  title: "Ed-Fi Text-to-SQL",
-  description: "NL → SQL → results for Ed-Fi ODS",
+  title: "Text-to-SQL",
+  description: "NL → SQL → results for any operator-supplied database",
 };
 
 const NAV = [
@@ -24,7 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b border-border bg-panel">
           <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-6">
             <Link href="/" className="font-semibold text-accent">
-              Ed-Fi Text-to-SQL
+              Text-to-SQL
             </Link>
             <nav className="flex gap-4 text-sm text-muted">
               {NAV.map((n) => (

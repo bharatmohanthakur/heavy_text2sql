@@ -86,6 +86,7 @@ export default function SettingsPage() {
       </div>
 
       <DatabaseConnectorForm config={config} onSaved={refresh} />
+      <CatalogInputsCard onChanged={refresh} />
       <MetadataDatabaseCard config={config} onSaved={refresh} />
       <LLMConnectorForm config={config} onSaved={refresh} />
       <EmbeddingConnectorForm config={config} onSaved={refresh} />
@@ -119,18 +120,18 @@ function ActiveBadge({ label, value }: { label: string; value: string }) {
 type TestState = { pending: boolean; ok?: boolean; error?: string; elapsed_ms?: number; detail?: string };
 
 function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSaved: () => void }) {
-  const [name, setName] = useState("my-ods");
+  const [name, setName] = useState("my-database");
   const [kind, setKind] = useState<"postgresql" | "mssql" | "sqlite">("postgresql");
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(5432);
-  const [database, setDatabase] = useState("EdFi_Ods");
-  const [user, setUser] = useState("edfi");
+  const [database, setDatabase] = useState("");
+  const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [setPrimary, setSetPrimary] = useState(true);
   const [trust, setTrust] = useState(true);
   const [encrypt, setEncrypt] = useState(false);
   // SQLite-specific
-  const [path, setPath] = useState("data/edfi/sample_demo.sqlite");
+  const [path, setPath] = useState("data/sample_demo.sqlite");
   const [readOnly, setReadOnly] = useState(true);
   const [test, setTest] = useState<TestState>({ pending: false });
   const [save, setSave] = useState<TestState>({ pending: false });
@@ -149,7 +150,7 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
       trust_server_certificate: trust,
       encrypt,
       driver: "pymssql",
-      schema_search_path: ["edfi", "tpdm"],
+      schema_search_path: [],
       // SQLite-specific (server ignores for postgres/mssql)
       path,
       read_only: readOnly,
@@ -197,7 +198,7 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
         {kind === "sqlite" ? (
           <>
             <Field label="File path" full>
-              <input className={inputCls} value={path} onChange={(e) => setPath(e.target.value)} placeholder="data/edfi/sample_demo.sqlite" />
+              <input className={inputCls} value={path} onChange={(e) => setPath(e.target.value)} placeholder="data/sample_demo.sqlite" />
             </Field>
             <div className="flex items-end gap-3 text-xs text-muted col-span-full">
               <Toggle label="Set as primary target DB" checked={setPrimary} onChange={setSetPrimary} />
@@ -258,7 +259,7 @@ function MetadataDatabaseCard({ config, onSaved }: { config: AdminConfig; onSave
   const [host, setHost] = useState<string>(String(meta.host ?? "127.0.0.1"));
   const [port, setPort] = useState<number>(Number(meta.port ?? (initialKind === "mssql" ? 1433 : 5432)));
   const [database, setDatabase] = useState<string>(String(meta.database ?? "text2sql_meta"));
-  const [user, setUser] = useState<string>(String(meta.user ?? "edfi"));
+  const [user, setUser] = useState<string>(String(meta.user ?? ""));
   const [test, setTest] = useState<TestState>({ pending: false });
   const [save, setSave] = useState<TestState>({ pending: false });
 
@@ -613,13 +614,142 @@ function EmbeddingConnectorForm({ config, onSaved }: { config: AdminConfig; onSa
 // ── Rebuild panel (unchanged from K4) ──────────────────────────────────
 
 const ALL_STAGES: { id: string; label: string; help: string }[] = [
-  { id: "ingest",    label: "Ingest Ed-Fi metadata",  help: "Fetch ApiModel.json + ForeignKeys.sql." },
-  { id: "classify",  label: "Classify tables",         help: "Map tables → Ed-Fi domains." },
-  { id: "graph",     label: "FK graph + APSP",         help: "Build the rustworkx graph + dist/next-hop." },
-  { id: "catalog",   label: "Table catalog (LLM)",     help: "One-time, ~5 min. Uses catalog_description LLM slot." },
-  { id: "index",     label: "Embed + FAISS index",     help: "Re-embed catalog with the current embedding provider." },
-  { id: "gold-seed", label: "Gold few-shot seed",      help: "Load gold_queries_bootstrap.yaml, exec-validate against the live DB." },
+  { id: "catalog-from-csvs", label: "Build catalog (from operator CSVs)", help: "Use the uploaded Schema + Relationships CSVs + the live target DB to build the catalog. Live-DB sample rows fill table/column descriptions and unique values via the catalog_description LLM slot." },
+  { id: "graph",             label: "FK graph + APSP",                    help: "Build the rustworkx graph + dist/next-hop from the FK edges in the Relationships CSV." },
+  { id: "index",             label: "Embed + FAISS index",                help: "Re-embed the catalog with the current embedding provider." },
+  { id: "gold-seed",         label: "Gold few-shot seed",                 help: "Load gold queries (if any) and exec-validate against the live DB." },
 ];
+
+// ── Catalog inputs: operator-CSV upload (Q3 + Q7) ───────────────────────
+
+type CatalogInputsStatus = {
+  present: boolean;
+  schema_csv_path?: string | null;
+  relationships_csv_path?: string | null;
+  table_count?: number | null;
+  column_count?: number | null;
+  fk_count?: number | null;
+  domain_count?: number | null;
+  error?: string | null;
+};
+
+function CatalogInputsCard({ onChanged }: { onChanged: () => void }) {
+  const [status, setStatus] = useState<CatalogInputsStatus | null>(null);
+  const [schemaFile, setSchemaFile] = useState<File | null>(null);
+  const [relFile, setRelFile] = useState<File | null>(null);
+  const [save, setSave] = useState<TestState>({ pending: false });
+
+  async function refresh() {
+    try {
+      const r = await fetch(`${BASE}/admin/catalog_inputs`);
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      setStatus(await r.json());
+    } catch (e) {
+      setStatus({ present: false, error: String(e) });
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function runUpload() {
+    if (!schemaFile || !relFile) {
+      setSave({ pending: false, ok: false, error: "Select both files first." });
+      return;
+    }
+    setSave({ pending: true });
+    try {
+      const fd = new FormData();
+      fd.append("schema_csv", schemaFile);
+      fd.append("relationships_csv", relFile);
+      const r = await fetch(`${BASE}/admin/catalog_inputs/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(`${r.status} ${r.statusText}: ${txt}`);
+      }
+      const body = (await r.json()) as CatalogInputsStatus;
+      setStatus(body);
+      setSave({
+        pending: false,
+        ok: true,
+        detail: `Uploaded · ${body.table_count} tables · ${body.column_count} columns · ${body.fk_count} FK edges · ${body.domain_count} domains`,
+      });
+      onChanged();
+    } catch (e) {
+      setSave({ pending: false, ok: false, error: String(e) });
+    }
+  }
+
+  return (
+    <FormCard
+      title="Catalog inputs (operator CSVs)"
+      subtitle="Upload the two CSVs that describe the target database — Schema (Ranking, Domain, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, Populated) and Relationships (FK_Name, Parent_Table/Column, Referenced_Table/Column, Parent_Schema, Referenced_Schema). They drive the catalog build for the active database."
+    >
+      <div className="text-xs text-muted mb-3">
+        {status === null ? (
+          <>Loading current status…</>
+        ) : status.present ? (
+          <>
+            <span className="text-emerald-400">✓ uploaded</span>
+            {status.error ? (
+              <> — but failed to parse: <code>{status.error}</code></>
+            ) : (
+              <>
+                {" · "}{status.table_count} tables · {status.column_count} columns ·
+                {" "}{status.fk_count} FK edges · {status.domain_count} domains
+              </>
+            )}
+          </>
+        ) : (
+          <>No CSVs uploaded yet for the active provider.</>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Schema CSV" full>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => setSchemaFile(e.target.files?.[0] ?? null)}
+            className="text-xs file:mr-3 file:px-3 file:py-1 file:rounded file:border-0 file:bg-panel file:text-foreground"
+          />
+        </Field>
+        <Field label="Relationships CSV" full>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => setRelFile(e.target.files?.[0] ?? null)}
+            className="text-xs file:mr-3 file:px-3 file:py-1 file:rounded file:border-0 file:bg-panel file:text-foreground"
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={runUpload}
+          disabled={save.pending || !schemaFile || !relFile}
+          className="border border-accent text-accent rounded px-3 py-1 text-xs hover:bg-accent/10 disabled:opacity-50"
+        >
+          {save.pending ? "Uploading…" : "Upload + validate"}
+        </button>
+        {save.ok && <span className="text-xs text-emerald-400">{save.detail}</span>}
+        {save.ok === false && (
+          <span className="text-xs text-rose-400 whitespace-pre-wrap">{save.error}</span>
+        )}
+      </div>
+
+      <p className="mt-3 text-xs text-muted">
+        After upload, run the <code>catalog-from-csvs</code> stage in Rebuild
+        below. Files validate before being persisted — a malformed row aborts
+        with a 400 and nothing is written.
+      </p>
+    </FormCard>
+  );
+}
 
 function RebuildPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set(["index"]));

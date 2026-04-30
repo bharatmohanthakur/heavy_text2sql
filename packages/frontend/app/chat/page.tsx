@@ -305,7 +305,7 @@ export default function ChatPage() {
                 send();
               }
             }}
-            placeholder={streaming ? "Agent is working…" : "Ask anything about the Ed-Fi ODS"}
+            placeholder={streaming ? "Agent is working…" : "Ask anything about your database"}
             disabled={streaming}
             className="flex-1 border border-border bg-panel rounded px-3 py-2 text-sm focus:outline-none focus:border-accent"
           />

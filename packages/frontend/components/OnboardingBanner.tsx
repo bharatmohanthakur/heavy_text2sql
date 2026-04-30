@@ -23,8 +23,8 @@ export function OnboardingBanner() {
       <div className="text-amber-300/80 mb-2">
         {!health.catalog_loaded && <>No table catalog has been built. </>}
         {!health.pipeline_ready && <>The query pipeline is offline. </>}
-        Open Settings and run the Rebuild stages (ingest → classify → graph →
-        catalog → index → gold-seed) to get going.
+        Open Settings, upload your Schema + Relationships CSVs, then run the
+        Rebuild stages (catalog-from-csvs → graph → index) to get going.
       </div>
       <Link
         href="/settings"
