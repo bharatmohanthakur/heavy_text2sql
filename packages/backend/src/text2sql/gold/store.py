@@ -82,6 +82,12 @@ class GoldStore:
 
     def ensure_schema(self) -> None:
         _Base.metadata.create_all(self._engine)
+        # Forward-only migration: ADD COLUMN any field added since this
+        # gold_sql table was first created (e.g. N4's target_provider /
+        # dialect / source_gold_id). Safe on fresh DBs — the columns are
+        # already there, the helper finds nothing to add.
+        from text2sql.agent._migrations import add_missing_columns
+        add_missing_columns(self._engine, GoldSqlRow.__table__)
 
     def drop_schema(self) -> None:
         _Base.metadata.drop_all(self._engine)

@@ -172,8 +172,12 @@ class ConversationStore:
         )
 
     def ensure_schema(self) -> None:
-        """Create only the conversation tables. Idempotent."""
+        """Create the conversation tables; ADD COLUMN any missing fields
+        on legacy installations (e.g. `dialect`, added in O1). Idempotent."""
         _Base.metadata.create_all(self._engine)
+        from text2sql.agent._migrations import add_missing_columns
+        add_missing_columns(self._engine, ConversationRow.__table__)
+        add_missing_columns(self._engine, ConversationMessageRow.__table__)
 
     def drop_schema(self) -> None:
         """Drop ONLY the conversation tables (`conversation`,
