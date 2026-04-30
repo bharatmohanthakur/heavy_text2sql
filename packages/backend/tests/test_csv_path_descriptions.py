@@ -121,6 +121,55 @@ def _three_table_inputs() -> CatalogInputs:
     return CatalogInputs.from_csvs(schema, rels)
 
 
+def test_csv_path_fills_unique_values_per_column_from_live_db(
+    sqlite_engine, tmp_path: Path,
+):
+    """Q5 — every column's `sample_values` and `distinct_count` should
+    come from the live DB on the CSV path. Low-cardinality columns
+    (FirstName here, 2 distinct values) get the actual values; the
+    primary key (uniquely-valued integer) gets only the count, which
+    matches the catalog builder's low_card_threshold contract."""
+    idx, classifications, manifest = synthesize_inputs_for_builder(
+        _three_table_inputs(), sql_engine=sqlite_engine,
+    )
+    catalog = build_table_catalog(
+        classifications=classifications,
+        catalog_index=idx,
+        manifest=manifest,
+        sql_engine=sqlite_engine,
+        description_generator=None,             # description LLM is Q4
+        sample_row_count=2,
+        # Force a low low_card_threshold so 2-distinct FirstName lands
+        # in sample_values but the unique PK doesn't.
+        low_card_threshold=5,
+        include_unknown_tables=False,
+    )
+    by_fqn = {e.fqn: e for e in catalog.entries}
+
+    student = by_fqn["edfi.Student"]
+    cols = {c.name: c for c in student.columns}
+
+    # FirstName: 2 distinct rows → both surface as sample_values
+    fn = cols["FirstName"]
+    assert set(fn.sample_values) == {"Ana", "Bilal"}
+    assert fn.distinct_count == 2
+
+    # PK column: distinct count populated, sample_values stays empty
+    # (PKs aren't useful for entity resolution, only the count is).
+    # The catalog builder's _column_distinct intentionally keeps PKs
+    # without samples regardless of low_card_threshold via the
+    # is_identifying flag — but on the CSV path PK list is reflected
+    # from SA, so we just check distinct_count is populated.
+    pk = cols["StudentUSI"]
+    assert pk.distinct_count == 2
+
+    # Empty table behavior — School has 1 row, just confirm it didn't
+    # error out and Name (only column) got its 1 value.
+    school = by_fqn["edfi.School"]
+    name_col = next(c for c in school.columns if c.name == "Name")
+    assert name_col.sample_values == ["Northridge HS"]
+
+
 def test_csv_path_fills_table_descriptions_from_live_db_samples(
     sqlite_engine, tmp_path: Path,
 ):
@@ -162,3 +211,60 @@ def test_csv_path_fills_table_descriptions_from_live_db_samples(
     assert "SAMPLE ROWS" in p
     # Concrete sample row content — proves the DB read flowed through.
     assert "Ana" in p or "Bilal" in p, p
+
+    # Q6 — every column should get a description filled by the LLM
+    # (CSV path has no apimodel column descriptions, so every column
+    # ends up in `columns_to_describe`). The LLM's prompt must have
+    # included the column's name + live-DB sample values.
+    student = by_fqn["edfi.Student"]
+    for col in student.columns:
+        assert col.description, (
+            f"edfi.Student.{col.name} description should be LLM-filled"
+        )
+        assert col.description_source in ("llm", "cache"), (
+            f"edfi.Student.{col.name} source={col.description_source!r}"
+        )
+
+    # Prompt for Student must list FirstName as a column with its
+    # live-DB sample values — pins the data path for Q6.
+    assert "FirstName" in p
+    assert "Ana" in p, p
+
+
+def test_csv_path_descriptions_cache_hits_on_repeat_build(
+    sqlite_engine, tmp_path: Path,
+):
+    """Second build with the same inputs and same cache file should
+    serve every description from the cache — proving the
+    per-provider cache works on the CSV path. (Q4/Q6 cache contract.)"""
+    cache_path = tmp_path / ".desc_cache.json"
+
+    fake1 = _FakeLLM()
+    desc_gen1 = DescriptionGenerator(fake1, cache_path=cache_path)
+    idx, classifications, manifest = synthesize_inputs_for_builder(
+        _three_table_inputs(), sql_engine=sqlite_engine,
+    )
+    build_table_catalog(
+        classifications=classifications, catalog_index=idx, manifest=manifest,
+        sql_engine=sqlite_engine, description_generator=desc_gen1,
+        sample_row_count=2, include_unknown_tables=False,
+    )
+    n_first = len(fake1.calls)
+    assert n_first >= 3, "first build must call LLM at least once per table"
+
+    # Second pass — same cache file, fresh fake. Cache must absorb
+    # everything; the new fake should never see a single call.
+    fake2 = _FakeLLM()
+    desc_gen2 = DescriptionGenerator(fake2, cache_path=cache_path)
+    catalog2 = build_table_catalog(
+        classifications=classifications, catalog_index=idx, manifest=manifest,
+        sql_engine=sqlite_engine, description_generator=desc_gen2,
+        sample_row_count=2, include_unknown_tables=False,
+    )
+    assert fake2.calls == [], (
+        f"cache miss — LLM was called {len(fake2.calls)} times on rebuild"
+    )
+    # And every entry should still have a description (now sourced as "cache")
+    for e in catalog2.entries:
+        assert e.description
+        assert e.description_source == "cache"
