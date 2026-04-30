@@ -179,3 +179,33 @@ def test_test_metadata_db_reports_sqlite_missing_path_clearly(client):
     body = r.json()
     assert body["ok"] is False
     assert "path" in (body["error"] or "").lower()
+
+
+# ── H2: password redaction in error responses ─────────────────────────────
+
+
+def test_test_metadata_db_redacts_password_from_driver_errors(client, monkeypatch):
+    """Postgres can't reach `127.0.0.1:5/no` and the driver echoes the
+    connection string back. The endpoint must scrub the literal password
+    so it doesn't leak through the UI."""
+    monkeypatch.setenv("PG_PW", "Hunter2!Pass")
+    import text2sql.api.admin as admin_mod
+    overlay_path = Path(admin_mod.RUNTIME_OVERRIDES_PATH)
+    overlay_path.write_text(json.dumps({
+        "metadata_db": {
+            "kind": "postgresql",
+            "host": "127.0.0.1",
+            "port": 5,                   # unreachable port → guaranteed connect failure
+            "database": "no",
+            "user": "u",
+            "password_env": "PG_PW",
+        },
+    }, indent=2))
+
+    r = client.post("/admin/test_metadata_db")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    err = body["error"] or ""
+    # The literal password value MUST NOT appear in the response.
+    assert "Hunter2!Pass" not in err, f"password leaked into error: {err!r}"

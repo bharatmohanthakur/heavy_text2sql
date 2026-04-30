@@ -125,3 +125,35 @@ def test_unknown_kind_raises_with_actionable_message():
     with pytest.raises(RuntimeError) as ei:
         _metadata_sa_url(cfg)
     assert "snowflake" in str(ei.value)
+
+
+# ── M2: passwords with URL-reserved chars must be escaped ───────────────────
+
+
+def test_password_with_at_sign_is_escaped(monkeypatch):
+    """A password containing `@` would, with naive f-string concatenation,
+    break the host parse (`user:pw@@host` looks like two `@`s, the second
+    one ending the userinfo). URL.create escapes it to `%40`."""
+    monkeypatch.setenv("PG_PW", "p@ss")
+    cfg = _cfg("postgresql", host="db", port=5432, database="m",
+                user="u", password_env="PG_PW")
+    url = _metadata_sa_url(cfg)
+    assert "p%40ss" in url
+    # And the host is still parsed correctly downstream.
+    from sqlalchemy.engine import make_url
+    parsed = make_url(url)
+    assert parsed.host == "db" and parsed.password == "p@ss"
+
+
+def test_password_with_colon_and_slash_is_escaped(monkeypatch):
+    """Colon and forward-slash also need percent-encoding."""
+    monkeypatch.setenv("PG_PW", "a:b/c")
+    cfg = _cfg("postgresql", host="h", port=5432, database="m",
+                user="u", password_env="PG_PW")
+    url = _metadata_sa_url(cfg)
+    from sqlalchemy.engine import make_url
+    parsed = make_url(url)
+    assert parsed.password == "a:b/c"
+    # Literal colon/slash must NOT appear in the userinfo segment.
+    userinfo = url.split("@")[0].split("//")[-1]
+    assert "a:b/c" not in userinfo

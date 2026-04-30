@@ -169,8 +169,14 @@ def metadata_sa_url(cfg: "AppConfig") -> str:
     SQLite is the zero-infra story: pair a SQLite target_db with a
     SQLite metadata_db and the whole platform runs out of a single
     folder of files — no Docker, no Postgres, no MSSQL.
+
+    Built via SQLAlchemy's `URL.create()` so passwords containing URL-
+    reserved chars (`:`, `@`, `/`, `?`, `#`, `%`) are escaped correctly
+    rather than concatenated into a malformed URL (M2 from review).
     """
     import os
+
+    from sqlalchemy.engine import URL
 
     spec = cfg.metadata_db.model_dump()
     kind = spec.get("kind", "postgresql")
@@ -183,26 +189,53 @@ def metadata_sa_url(cfg: "AppConfig") -> str:
             )
         if path != ":memory:" and not os.path.isabs(path):
             path = str(REPO_ROOT / path)
-        return f"sqlite:///{path}"
+        # `:memory:` and absolute paths render the same way through URL.create
+        # but we keep the literal f-string for `:memory:` because SA renders
+        # it as `sqlite:///` (empty database) otherwise.
+        if path == ":memory:":
+            return "sqlite:///:memory:"
+        return URL.create("sqlite", database=path).render_as_string(hide_password=False)
 
     pw_env = spec.get("password_env")
     password = os.environ.get(pw_env or "", "")
-    user = spec.get("user", "")
+    user = spec.get("user") or None
     host = spec.get("host", "127.0.0.1")
     port = int(spec.get("port") or (5432 if kind == "postgresql" else 1433))
     database = spec.get("database", "")
 
     if kind == "mssql":
-        return (
-            f"mssql+pymssql://{user}:{password}"
-            f"@{host}:{port}/{database}?tds_version=7.4"
+        url = URL.create(
+            "mssql+pymssql",
+            username=user, password=password or None,
+            host=host, port=port, database=database,
+            query={"tds_version": "7.4"},
         )
+        return url.render_as_string(hide_password=False)
     if kind == "postgresql":
-        return (
-            f"postgresql+psycopg://{user}:{password}"
-            f"@{host}:{port}/{database}"
+        url = URL.create(
+            "postgresql+psycopg",
+            username=user, password=password or None,
+            host=host, port=port, database=database,
         )
+        return url.render_as_string(hide_password=False)
     raise RuntimeError(f"unknown metadata_db kind: {kind!r}")
+
+
+def metadata_password(cfg: "AppConfig") -> str:
+    """Return the metadata DB password from env, or "" if not applicable.
+
+    Used by error-handling paths that need to scrub the password from
+    driver error strings (which often echo the literal connection
+    string back). H2 from the security review.
+    """
+    import os
+
+    spec = cfg.metadata_db.model_dump()
+    kind = spec.get("kind", "postgresql")
+    if kind == "sqlite":
+        return ""
+    pw_env = spec.get("password_env")
+    return os.environ.get(pw_env or "", "")
 
 
 def resolve_artifact_path(

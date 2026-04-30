@@ -444,9 +444,13 @@ async def stream_job(job_id: str) -> StreamingResponse:
 def test_metadata_db() -> _DbTestResponse:
     """Probe the configured metadata DB. Supports all three kinds the
     platform allows for metadata: postgresql / mssql / sqlite. The
-    dialect-specific URL builder lives in config so cli + admin agree."""
+    dialect-specific URL builder lives in config so cli + admin agree.
+
+    Driver errors often echo the literal connection string back —
+    including the password — so we redact it before returning (H2).
+    """
     import time
-    from text2sql.config import metadata_sa_url
+    from text2sql.config import metadata_password, metadata_sa_url
 
     cfg = load_config()
     kind = cfg.metadata_db.model_dump().get("kind", "postgresql")
@@ -471,7 +475,12 @@ def test_metadata_db() -> _DbTestResponse:
                                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
                                server_version=version)
     except Exception as e:
-        return _DbTestResponse(ok=False, error=f"{type(e).__name__}: {e}",
+        msg = f"{type(e).__name__}: {e}"
+        # Scrub the literal password if the driver leaked it into the error.
+        pw = metadata_password(cfg)
+        if pw:
+            msg = msg.replace(pw, "***")
+        return _DbTestResponse(ok=False, error=msg,
                                elapsed_ms=(time.perf_counter() - t0) * 1000.0)
 
 
