@@ -59,12 +59,14 @@ def client(app):
 # ── Health + catalog browse ──────────────────────────────────────────────────
 
 
-def test_health(client) -> None:
+def test_health(client, catalog) -> None:
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert body["tables"] >= 800
+    # /health reports whatever the loaded catalog actually has —
+    # operator-CSV-driven, can be any size.
+    assert body["tables"] == len(catalog.entries)
 
 
 def test_list_tables_default(client) -> None:
@@ -97,11 +99,13 @@ def test_get_table_known(client) -> None:
     assert body["primary_key"]
 
 
-def test_list_domains(client) -> None:
+def test_list_domains(client, catalog) -> None:
     r = client.get("/domains")
     assert r.status_code == 200
     body = r.json()
-    assert body["total"] >= 30
+    # Domain count varies by operator. Just check the endpoint returned
+    # the right shape and at least one domain was discovered.
+    assert body["total"] >= 1
     assert all("name" in d and "table_count" in d for d in body["domains"])
 
 

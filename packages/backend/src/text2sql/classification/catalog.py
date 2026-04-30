@@ -83,6 +83,48 @@ _TPDM_DOMAINS: dict[str, str] = {
 }
 
 
+def load_domain_catalog_from_inputs(
+    inputs,                                   # CatalogInputs (typed loosely to avoid import cycle)
+    *,
+    overrides_path: Path | None = None,
+) -> DomainCatalog:
+    """Build a DomainCatalog from operator-supplied CatalogInputs.
+
+    Domains come from the Schema CSV's `Domain` column. Seed entities are
+    the first three tables observed for each domain (in CSV order), which
+    gives the LLM a concrete anchor without ever touching Ed-Fi prose.
+    Descriptions stay empty unless an `overrides_path` provides them.
+    """
+    seen: dict[str, list[str]] = {}
+    for col in inputs.columns:
+        # Column rows repeat per column; collapse to unique table ordering.
+        seen.setdefault(col.domain, [])
+        if col.fqn not in seen[col.domain]:
+            seen[col.domain].append(col.fqn)
+
+    domains: list[Domain] = []
+    for name, members in seen.items():
+        domains.append(Domain(
+            name=name,
+            description=f"{name} domain (operator-declared).",
+            seed_entities=tuple(members[:3]),
+        ))
+    domains.sort(key=lambda d: d.name)
+
+    if overrides_path and overrides_path.exists():
+        raw = yaml.safe_load(overrides_path.read_text(encoding="utf-8")) or {}
+        existing = {d.name: d for d in domains}
+        for entry in raw.get("domains", []):
+            existing[entry["name"]] = Domain(
+                name=entry["name"],
+                description=entry.get("description", ""),
+                seed_entities=tuple(entry.get("seed_entities", [])),
+            )
+        domains = sorted(existing.values(), key=lambda d: d.name)
+
+    return DomainCatalog(domains=domains)
+
+
 def load_domain_catalog(
     manifest: IngestionManifest,
     *,

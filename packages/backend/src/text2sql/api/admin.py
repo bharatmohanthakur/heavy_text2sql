@@ -259,14 +259,11 @@ from fastapi.responses import StreamingResponse
 # the operator would run by hand, so the orchestrator never duplicates stage
 # logic.
 _STAGE_COMMANDS: dict[str, list[str]] = {
-    "ingest":              ["text2sql", "ingest"],
-    "classify":            ["text2sql", "map-tables-cmd"],
+    # The build pipeline now flows entirely off the operator CSVs +
+    # the live target DB. There's no upstream-fetch stage, no separate
+    # classifier — the CSVs ARE the classification.
+    "catalog-from-csvs":   ["text2sql", "build-table-catalog-cmd"],
     "graph":               ["text2sql", "build-fk-graph"],
-    "catalog":             ["text2sql", "build-table-catalog-cmd"],
-    # Q3 — operator-CSV pivot path. Skips ingest/classify (the CSVs ARE
-    # the classification) and builds the catalog directly from the
-    # CSVs uploaded via /admin/catalog_inputs/upload.
-    "catalog-from-csvs":   ["text2sql", "build-table-catalog-cmd", "--from-csvs"],
     "index":               ["text2sql", "index-catalog"],
     "gold-seed":           ["text2sql", "gold-seed"],
 }

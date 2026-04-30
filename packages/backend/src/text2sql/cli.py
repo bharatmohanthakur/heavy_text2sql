@@ -21,32 +21,8 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from text2sql.config import REPO_ROOT, load_config
-from text2sql.ingestion.edfi_fetcher import IngestionConfig, IngestionManifest, fetch_all, verify_manifest
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
-
-
-@app.command()
-def ingest(force: bool = False, verify: bool = True) -> None:
-    """Fetch Ed-Fi artifacts (ApiModel.json + 0030-ForeignKeys.sql) into data/edfi/."""
-    cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    typer.echo(f"DS {ic.data_standard_version} ({ic.sql_dialect}) → {ic.cache_dir}")
-    manifest = fetch_all(ic, force=force)
-    typer.echo(f"\nFetched {len(manifest.artifacts)} artifact set(s):")
-    for a in manifest.artifacts:
-        c = manifest.counts[a.source]
-        typer.echo(f"  {a.source}: {c['entities']} entities, {c['fks']} FKs, "
-                   f"{c['aggregates']} aggregates, {c['domains']} domains, "
-                   f"{c['descriptors']} descriptors")
-    if verify:
-        try:
-            verify_manifest(manifest)
-            typer.echo("\n✅ verification passed")
-        except Exception as e:
-            typer.echo(f"\n❌ verification failed:\n{e}", err=True)
-            sys.exit(1)
-    typer.echo(f"\nManifest: {ic.cache_dir / 'manifest.json'}")
 
 
 @app.command(name="ingest-csvs")
@@ -124,108 +100,47 @@ def show_config() -> None:
 
 
 @app.command()
-def map_tables_cmd(
-    out: Path = typer.Option(Path("data/artifacts/table_classification.json")),
-) -> None:
-    """Component 2a: parse ApiModel.json → table → domain mapping (no LLM in 99% of cases)."""
-    from text2sql.classification import load_domain_catalog, map_tables, write_table_mapping
-    from text2sql.classification.metadata import CatalogIndex
-    from text2sql.providers import build_llm
-
-    cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest_path = ic.cache_dir / "manifest.json"
-    if not manifest_path.exists():
-        typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
-        sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-    catalog = load_domain_catalog(manifest)
-    index = CatalogIndex.from_manifest(manifest)
-
-    # Provide an LLM for the (rare) residuals — only fires if needed.
-    llm = None
-    try:
-        llm = build_llm(cfg.llm_for_task("classifier_fallback"))
-    except Exception as e:
-        typer.echo(f"(no LLM available — residuals will be marked 'Other'): {e}")
-
-    classifications = map_tables(
-        index, catalog,
-        llm=llm,
-        overrides_path=REPO_ROOT / "configs" / "domain_overrides.yaml",
-    )
-    out_path = REPO_ROOT / out
-    output = write_table_mapping(
-        out_path, classifications,
-        data_standard_version=manifest.data_standard_version,
-        catalog=catalog,
-    )
-    typer.echo(f"\nWrote {out_path}")
-    typer.echo(f"  total: {output.summary['total']}")
-    typer.echo(f"  by source: {output.summary['by_source']}")
-    typer.echo(f"  with secondary domain: {output.summary['with_secondary']}")
-
-
-@app.command()
 def build_fk_graph(
-    classification: Path = typer.Option(Path("data/artifacts/table_classification.json")),
     out: Path = typer.Option(Path("data/artifacts/graph")),
-    from_csvs: bool = typer.Option(
-        False, "--from-csvs",
-        help="Source FK edges from the operator Relationships CSV in the active "
-             "provider's artifact dir instead of the Ed-Fi manifest.",
-    ),
 ) -> None:
-    """Component 3: parse FKs → build graph → APSP → persist artifacts."""
-    from text2sql.classification import read_table_mapping
+    """Build the FK graph from the operator's relationships.csv +
+    live-DB reflection. APSP + next-hop tables are persisted to `out`.
+
+    The source of truth is the active provider's
+    `catalog_inputs/relationships.csv` (uploaded via Settings or
+    `text2sql ingest-csvs`). Live-DB reflection adds any FK constraints
+    the operator omitted but the database actually defines.
+    """
+    from text2sql.catalog_inputs import (
+        CatalogInputs,
+        synthesize_inputs_for_builder,
+    )
+    from text2sql.config import resolve_artifact_path
     from text2sql.graph import build_graph, parse_fks, save_graph
 
     cfg = load_config()
 
-    edges: list = []
-    if from_csvs:
-        # Operator-CSV pivot path (Q3): FK edges come straight from the
-        # validated relationships.csv. Same FKEdge dataclass shape as
-        # the sqlglot-parsed Ed-Fi edges, so the graph builder is happy.
-        from text2sql.catalog_inputs import CatalogInputs
-        from text2sql.config import resolve_artifact_path
-        csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
-        schema_csv = csv_dir / "schema.csv"
-        rel_csv = csv_dir / "relationships.csv"
-        if not (schema_csv.exists() and rel_csv.exists()):
-            typer.echo(
-                f"Operator CSVs not found in {csv_dir}. "
-                f"Run `text2sql ingest-csvs` first.",
-                err=True,
-            )
-            sys.exit(1)
-        inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
-        edges = list(inputs.fk_edges)
-        typer.echo(f"Parsed {len(edges)} FK edges from operator CSV")
-        # Synthesize classifications too so edge-weighting only sees
-        # the operator's tables — not stale 829-row Ed-Fi data.
-        from text2sql.catalog_inputs import synthesize_inputs_for_builder
-        _, csv_classifications, _ = synthesize_inputs_for_builder(inputs)
-    else:
-        ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-        manifest_path = ic.cache_dir / "manifest.json"
-        if not manifest_path.exists():
-            typer.echo("No ingest manifest. Run `text2sql ingest` first, "
-                       "or pass --from-csvs to use operator CSVs.", err=True)
-            sys.exit(1)
-        manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-        for art in manifest.artifacts:
-            edges.extend(parse_fks(art.foreign_keys_sql_path))
-        typer.echo(f"Parsed {len(edges)} FK edges")
+    csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
+    schema_csv = csv_dir / "schema.csv"
+    rel_csv = csv_dir / "relationships.csv"
+    if not (schema_csv.exists() and rel_csv.exists()):
+        typer.echo(
+            f"Operator CSVs not found in {csv_dir}. "
+            f"Run `text2sql ingest-csvs` first.",
+            err=True,
+        )
+        sys.exit(1)
+    inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
+    edges: list = list(inputs.fk_edges)
+    typer.echo(f"Parsed {len(edges)} FK edges from operator CSV")
+    _, classifications, _ = synthesize_inputs_for_builder(inputs)
 
-    # Extension: reflect FKs from the live target DB and merge in any
-    # constraints that aren't in 0030-ForeignKeys.sql (covers tables
-    # that aren't part of the Ed-Fi standard model).
+    # Live-DB reflection: pick up FKs the operator didn't list (e.g.
+    # extension/vendor tables that exist only in the live DB).
     try:
         from text2sql.providers import build_sql_engine
         from text2sql.table_catalog.catalog_builder import reflect_unknown_tables
         engine = build_sql_engine(cfg.target_db_provider())
-        # Tables already covered by ApiModel-driven FKs.
         known_table_fqns: set[str] = set()
         for e in edges:
             known_table_fqns.add(e.src_fqn)
@@ -242,18 +157,7 @@ def build_fk_graph(
     except Exception as e:
         typer.echo(f"(skipping live-DB FK reflection: {e})", err=True)
 
-    if from_csvs:
-        classifications = csv_classifications
-        typer.echo(f"Using {len(classifications)} CSV-synthesized classifications for edge weighting")
-    else:
-        classifications = []
-        cl_path = REPO_ROOT / classification
-        if cl_path.exists():
-            classifications = read_table_mapping(cl_path).classifications
-            typer.echo(f"Using {len(classifications)} classifications for edge weighting")
-        else:
-            typer.echo("(no classification file — using default edge weights)")
-
+    typer.echo(f"Using {len(classifications)} classifications for edge weighting")
     g = build_graph(edges, classifications=classifications)
     typer.echo(f"Graph: {len(g.nodes)} nodes, {len(g.edges)} undirected edges")
     save_graph(g, REPO_ROOT / out)
@@ -262,21 +166,19 @@ def build_fk_graph(
 
 @app.command()
 def build_table_catalog_cmd(
-    classification: Path = typer.Option(Path("data/artifacts/table_classification.json")),
     out: Path = typer.Option(Path("data/artifacts/table_catalog.json")),
     skip_db: bool = typer.Option(False, help="Skip live value sampling (faster, offline)"),
     skip_llm: bool = typer.Option(False, help="Skip LLM gap-fill of missing column descriptions"),
     only: str | None = typer.Option(None, help="Comma-separated list of fqns to build (default: all)"),
-    from_csvs: bool = typer.Option(
-        False,
-        "--from-csvs",
-        help="Read inputs from the operator CSVs in the active provider's artifact dir "
-             "(populated by `text2sql ingest-csvs`) instead of the Ed-Fi manifest.",
-    ),
 ) -> None:
-    """Component 4: build the table catalog (one record per table; domains as tags)."""
-    from text2sql.classification import read_table_mapping
-    from text2sql.classification.metadata import CatalogIndex
+    """Build the table catalog from the operator's Schema +
+    Relationships CSVs and the live target DB.
+
+    Each entry has one record per table: column list (with type, PK,
+    sample values), description (LLM-filled from sample rows), and
+    domain tags (straight from the operator CSV). The catalog is the
+    single artifact downstream components consume.
+    """
     from text2sql.providers import build_llm, build_sql_engine
     from text2sql.table_catalog import (
         DescriptionGenerator,
@@ -315,50 +217,32 @@ def build_table_catalog_cmd(
 
     only_set = set(only.split(",")) if only else None
 
-    if from_csvs:
-        # Operator-CSV pivot path (Q3): no Ed-Fi GitHub manifest, no
-        # standalone classification file. We synthesize both from the
-        # CSVs in the active provider's artifact dir.
-        from text2sql.catalog_inputs import (
-            CatalogInputs,
-            synthesize_inputs_for_builder,
-        )
-        from text2sql.config import resolve_artifact_path
+    from text2sql.catalog_inputs import (
+        CatalogInputs,
+        synthesize_inputs_for_builder,
+    )
+    from text2sql.config import resolve_artifact_path
 
-        csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
-        schema_csv = csv_dir / "schema.csv"
-        rel_csv = csv_dir / "relationships.csv"
-        if not schema_csv.exists() or not rel_csv.exists():
-            typer.echo(
-                f"Operator CSVs not found in {csv_dir}. "
-                f"Run `text2sql ingest-csvs --schema X --relationships Y` first.",
-                err=True,
-            )
-            sys.exit(1)
-        typer.echo(f"Catalog inputs (CSVs): {csv_dir}")
-        inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
-        catalog_index, classifications, manifest = synthesize_inputs_for_builder(
-            inputs, sql_engine=engine,
-        )
+    csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
+    schema_csv = csv_dir / "schema.csv"
+    rel_csv = csv_dir / "relationships.csv"
+    if not schema_csv.exists() or not rel_csv.exists():
         typer.echo(
-            f"Synthesized: {inputs.table_count} tables · "
-            f"{inputs.column_count} columns · {inputs.fk_count} FK edges"
+            f"Operator CSVs not found in {csv_dir}. "
+            f"Upload them via Settings → Catalog inputs, or run "
+            f"`text2sql ingest-csvs --schema X --relationships Y`.",
+            err=True,
         )
-    else:
-        ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-        manifest_path = ic.cache_dir / "manifest.json"
-        if not manifest_path.exists():
-            typer.echo("No ingest manifest. Run `text2sql ingest` first, "
-                       "or pass --from-csvs to use operator CSVs.", err=True)
-            sys.exit(1)
-        manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-
-        cl_path = REPO_ROOT / classification
-        if not cl_path.exists():
-            typer.echo(f"No classification file at {cl_path}. Run `text2sql map-tables-cmd` first.", err=True)
-            sys.exit(1)
-        classifications = read_table_mapping(cl_path).classifications
-        catalog_index = CatalogIndex.from_manifest(manifest)
+        sys.exit(1)
+    typer.echo(f"Catalog inputs (CSVs): {csv_dir}")
+    inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
+    catalog_index, classifications, manifest = synthesize_inputs_for_builder(
+        inputs, sql_engine=engine,
+    )
+    typer.echo(
+        f"Synthesized: {inputs.table_count} tables · "
+        f"{inputs.column_count} columns · {inputs.fk_count} FK edges"
+    )
 
     catalog = build_table_catalog(
         classifications, catalog_index, manifest,
@@ -679,28 +563,49 @@ def ask(
         typer.echo(f"  {k:20s}  {v:8.1f} ms")
 
 
+def _load_runtime_inputs(cfg):
+    """Load (catalog, edges, classifications, domain_catalog) from the
+    operator-CSV bundle in the active provider's artifact dir.
+
+    The CSVs are the single source of truth: schema.csv → classifications
+    + DomainCatalog, relationships.csv → FK edges. Catalog comes off disk
+    from the prior `build-table-catalog-cmd` run.
+    """
+    from text2sql.catalog_inputs import (
+        CatalogInputs,
+        synthesize_inputs_for_builder,
+    )
+    from text2sql.classification.catalog import load_domain_catalog_from_inputs
+    from text2sql.config import resolve_artifact_path
+    from text2sql.table_catalog import load_table_catalog
+
+    csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
+    schema_csv = csv_dir / "schema.csv"
+    rel_csv = csv_dir / "relationships.csv"
+    if not (schema_csv.exists() and rel_csv.exists()):
+        raise RuntimeError(
+            f"No operator CSVs found in {csv_dir}. Upload them via "
+            f"Settings → Catalog inputs (or run `text2sql ingest-csvs`)."
+        )
+    inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
+    _, classifications, _ = synthesize_inputs_for_builder(inputs)
+    domain_catalog = load_domain_catalog_from_inputs(inputs)
+    catalog = load_table_catalog(resolve_artifact_path(cfg, "table_catalog.json"))
+    return catalog, list(inputs.fk_edges), classifications, domain_catalog
+
+
 def _build_pipeline():
     """Wire all components from config."""
-    import os
-    from text2sql.classification import QueryDomainClassifier, load_domain_catalog
+    from text2sql.classification import QueryDomainClassifier
     from text2sql.embedding import TableRetriever
     from text2sql.entity_resolution import EntityResolver, build_value_index
     from text2sql.gold import GoldStore
-    from text2sql.graph import build_graph, parse_fks
+    from text2sql.graph import build_graph
     from text2sql.pipeline import Text2SqlPipeline
     from text2sql.providers import build_embedding, build_llm, build_sql_engine, build_vector_store
-    from text2sql.table_catalog import load_table_catalog
 
     cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
-    edges = []
-    for art in manifest.artifacts:
-        edges.extend(parse_fks(art.foreign_keys_sql_path))
-    from text2sql.classification import read_table_mapping
-    classifications = read_table_mapping(REPO_ROOT / "data/artifacts/table_classification.json").classifications
+    catalog, edges, classifications, domain_catalog = _load_runtime_inputs(cfg)
     graph = build_graph(edges, classifications=classifications)
 
     embedder = build_embedding(cfg.embedding_provider())
@@ -717,7 +622,6 @@ def _build_pipeline():
     description_llm = build_llm(cfg.llm_for_task("description"))
     classifier_llm = build_llm(cfg.llm_for_task("classifier_fallback"))
 
-    domain_catalog = load_domain_catalog(manifest)
     domain_classifier = QueryDomainClassifier(
         classifier_llm, domain_catalog,
         cache_path=REPO_ROOT / "data/artifacts/.query_classification_cache.json",
@@ -759,34 +663,20 @@ def _build_agent_runner():
     is unreachable (the agent loop needs Postgres for conversation history).
     """
     from text2sql.agent import AgentRunner, ConversationStore, ToolContext
-    from text2sql.classification import (
-        QueryDomainClassifier,
-        load_domain_catalog,
-        read_table_mapping,
-    )
+    from text2sql.classification import QueryDomainClassifier
     from text2sql.embedding import TableRetriever
     from text2sql.entity_resolution import EntityResolver, build_value_index
     from text2sql.gold import GoldStore
-    from text2sql.graph import build_graph, parse_fks
+    from text2sql.graph import build_graph
     from text2sql.providers import (
         build_embedding,
         build_llm,
         build_sql_engine,
         build_vector_store,
     )
-    from text2sql.table_catalog import load_table_catalog
 
     cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
-    edges = []
-    for art in manifest.artifacts:
-        edges.extend(parse_fks(art.foreign_keys_sql_path))
-    classifications = read_table_mapping(
-        REPO_ROOT / "data/artifacts/table_classification.json"
-    ).classifications
+    catalog, edges, classifications, domain_catalog = _load_runtime_inputs(cfg)
     graph = build_graph(edges, classifications=classifications)
 
     embedder = build_embedding(cfg.embedding_provider())
@@ -804,7 +694,7 @@ def _build_agent_runner():
     except Exception as e:
         typer.echo(f"(live-db catalog filter failed: {e}; using full catalog)", err=True)
     domain_classifier = QueryDomainClassifier(
-        llm, load_domain_catalog(manifest), cache_path=None,
+        llm, domain_catalog, cache_path=None,
     )
     retriever = TableRetriever(embedder, store)
     value_index = build_value_index(catalog)
@@ -1024,22 +914,16 @@ def resolve_entities(
 
 @app.command()
 def classify_query(query: str) -> None:
-    """Component 2b: classify an NL query into ranked domains (runtime path)."""
-    from text2sql.classification import QueryDomainClassifier, load_domain_catalog
+    """Classify an NL query into ranked operator-defined domains."""
+    from text2sql.classification import QueryDomainClassifier
     from text2sql.providers import build_llm
 
     cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest_path = ic.cache_dir / "manifest.json"
-    if not manifest_path.exists():
-        typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
-        sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-    catalog = load_domain_catalog(manifest)
+    _, _, _, domain_catalog = _load_runtime_inputs(cfg)
 
     llm = build_llm(cfg.llm_for_task("classifier_fallback"))
     qc = QueryDomainClassifier(
-        llm, catalog,
+        llm, domain_catalog,
         cache_path=REPO_ROOT / "data/artifacts/.query_classification_cache.json",
     )
     out = qc.classify(query)

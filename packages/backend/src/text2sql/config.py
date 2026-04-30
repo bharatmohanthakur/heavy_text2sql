@@ -63,11 +63,19 @@ class GitHubSource(BaseModel):
 
 
 class EdFiConfig(BaseModel):
-    data_standard_version: str
+    """Legacy upstream-metadata config block.
+
+    Kept as a Pydantic model so existing YAML files still parse, but
+    nothing in the runtime path consumes it anymore — the operator-CSV
+    pivot replaced it. New deployments can drop the `ed_fi:` section
+    from their config; the defaults below let the model validate
+    against an empty dict.
+    """
+    data_standard_version: str = ""
     extensions: list[str] = Field(default_factory=list)
-    cache_dir: str
-    artifact_dir: str
-    github: GitHubSource
+    cache_dir: str = "data/.legacy_edfi"
+    artifact_dir: str = "data/artifacts"
+    github: GitHubSource | None = None
 
 
 class ProviderEntry(BaseModel):
@@ -109,7 +117,9 @@ class LoggingConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    ed_fi: EdFiConfig
+    # Legacy block — kept for back-compat with older YAMLs; not used
+    # by the runtime. Defaults so configs without this section parse.
+    ed_fi: EdFiConfig = Field(default_factory=EdFiConfig)
     llm: LLMSection
     embeddings: EmbeddingsSection
     vector_store: VectorStoreSection
