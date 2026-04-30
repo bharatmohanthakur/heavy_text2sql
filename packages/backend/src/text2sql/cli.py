@@ -49,6 +49,71 @@ def ingest(force: bool = False, verify: bool = True) -> None:
     typer.echo(f"\nManifest: {ic.cache_dir / 'manifest.json'}")
 
 
+@app.command(name="ingest-csvs")
+def ingest_csvs(
+    schema: Path = typer.Option(..., help="Path to the operator-supplied Schema CSV."),
+    relationships: Path = typer.Option(..., help="Path to the operator-supplied Relationships CSV."),
+    out_dir: Path | None = typer.Option(
+        None,
+        help="Where to copy the validated CSVs (defaults to the active provider's artifact dir).",
+    ),
+) -> None:
+    """Validate the two operator CSVs (Q1 + Q2) and copy them into the
+    active provider's artifact directory.
+
+    Subsequent stages (`build-table-catalog-cmd`, `build-fk-graph`)
+    pick them up from there. This replaces `text2sql ingest`'s GitHub
+    fetch on the operator-CSV pivot path.
+    """
+    import shutil
+
+    from text2sql.catalog_inputs import CatalogInputs
+    from text2sql.config import resolve_artifact_path
+
+    schema_path = REPO_ROOT / schema if not schema.is_absolute() else schema
+    rel_path = REPO_ROOT / relationships if not relationships.is_absolute() else relationships
+    if not schema_path.exists():
+        typer.echo(f"Schema CSV not found: {schema_path}", err=True); sys.exit(1)
+    if not rel_path.exists():
+        typer.echo(f"Relationships CSV not found: {rel_path}", err=True); sys.exit(1)
+
+    typer.echo(f"Schema CSV:        {schema_path}")
+    typer.echo(f"Relationships CSV: {rel_path}")
+
+    try:
+        inputs = CatalogInputs.from_csvs(schema_path, rel_path)
+    except Exception as e:
+        typer.echo(f"\n❌ CSV validation failed:\n  {type(e).__name__}: {e}", err=True)
+        sys.exit(1)
+
+    typer.echo(
+        f"\n✅ parsed: {inputs.table_count} tables · {inputs.column_count} columns · "
+        f"{inputs.fk_count} FK edges · {len(inputs.domains)} distinct domains"
+    )
+    typer.echo("Domain taxonomy (Ranking-ordered):")
+    for d in inputs.domains:
+        typer.echo(f"  · {d}")
+
+    cfg = load_config()
+    if out_dir is None:
+        # resolve_artifact_path knows about per-provider isolation; we
+        # write under data/artifacts/per_provider/<active>/catalog_inputs/.
+        marker = resolve_artifact_path(cfg, "catalog_inputs/.exists", write=True)
+        out_dir_resolved = marker.parent
+    else:
+        out_dir_resolved = REPO_ROOT / out_dir if not out_dir.is_absolute() else out_dir
+    out_dir_resolved.mkdir(parents=True, exist_ok=True)
+
+    schema_dst = out_dir_resolved / "schema.csv"
+    rel_dst = out_dir_resolved / "relationships.csv"
+    shutil.copyfile(schema_path, schema_dst)
+    shutil.copyfile(rel_path, rel_dst)
+    typer.echo(f"\nCopied → {schema_dst}")
+    typer.echo(f"Copied → {rel_dst}")
+    typer.echo("\nNext: `text2sql build-table-catalog-cmd --from-csvs` "
+               "to build the catalog from these inputs + the live DB.")
+
+
 @app.command()
 def show_config() -> None:
     """Print resolved AppConfig (secrets redacted)."""
@@ -168,6 +233,12 @@ def build_table_catalog_cmd(
     skip_db: bool = typer.Option(False, help="Skip live value sampling (faster, offline)"),
     skip_llm: bool = typer.Option(False, help="Skip LLM gap-fill of missing column descriptions"),
     only: str | None = typer.Option(None, help="Comma-separated list of fqns to build (default: all)"),
+    from_csvs: bool = typer.Option(
+        False,
+        "--from-csvs",
+        help="Read inputs from the operator CSVs in the active provider's artifact dir "
+             "(populated by `text2sql ingest-csvs`) instead of the Ed-Fi manifest.",
+    ),
 ) -> None:
     """Component 4: build the table catalog (one record per table; domains as tags)."""
     from text2sql.classification import read_table_mapping
@@ -180,19 +251,6 @@ def build_table_catalog_cmd(
     )
 
     cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest_path = ic.cache_dir / "manifest.json"
-    if not manifest_path.exists():
-        typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
-        sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-
-    cl_path = REPO_ROOT / classification
-    if not cl_path.exists():
-        typer.echo(f"No classification file at {cl_path}. Run `text2sql map-tables-cmd` first.", err=True)
-        sys.exit(1)
-    classifications = read_table_mapping(cl_path).classifications
-    catalog_index = CatalogIndex.from_manifest(manifest)
 
     engine = None
     if not skip_db:
@@ -218,6 +276,51 @@ def build_table_catalog_cmd(
             typer.echo(f"(no LLM — skipping gap-fill): {e}")
 
     only_set = set(only.split(",")) if only else None
+
+    if from_csvs:
+        # Operator-CSV pivot path (Q3): no Ed-Fi GitHub manifest, no
+        # standalone classification file. We synthesize both from the
+        # CSVs in the active provider's artifact dir.
+        from text2sql.catalog_inputs import (
+            CatalogInputs,
+            synthesize_inputs_for_builder,
+        )
+        from text2sql.config import resolve_artifact_path
+
+        csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
+        schema_csv = csv_dir / "schema.csv"
+        rel_csv = csv_dir / "relationships.csv"
+        if not schema_csv.exists() or not rel_csv.exists():
+            typer.echo(
+                f"Operator CSVs not found in {csv_dir}. "
+                f"Run `text2sql ingest-csvs --schema X --relationships Y` first.",
+                err=True,
+            )
+            sys.exit(1)
+        typer.echo(f"Catalog inputs (CSVs): {csv_dir}")
+        inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
+        catalog_index, classifications, manifest = synthesize_inputs_for_builder(
+            inputs, sql_engine=engine,
+        )
+        typer.echo(
+            f"Synthesized: {inputs.table_count} tables · "
+            f"{inputs.column_count} columns · {inputs.fk_count} FK edges"
+        )
+    else:
+        ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
+        manifest_path = ic.cache_dir / "manifest.json"
+        if not manifest_path.exists():
+            typer.echo("No ingest manifest. Run `text2sql ingest` first, "
+                       "or pass --from-csvs to use operator CSVs.", err=True)
+            sys.exit(1)
+        manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+
+        cl_path = REPO_ROOT / classification
+        if not cl_path.exists():
+            typer.echo(f"No classification file at {cl_path}. Run `text2sql map-tables-cmd` first.", err=True)
+            sys.exit(1)
+        classifications = read_table_mapping(cl_path).classifications
+        catalog_index = CatalogIndex.from_manifest(manifest)
 
     catalog = build_table_catalog(
         classifications, catalog_index, manifest,

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from text2sql.config import (
@@ -263,6 +263,10 @@ _STAGE_COMMANDS: dict[str, list[str]] = {
     "classify":            ["text2sql", "map-tables-cmd"],
     "graph":               ["text2sql", "build-fk-graph"],
     "catalog":             ["text2sql", "build-table-catalog-cmd"],
+    # Q3 — operator-CSV pivot path. Skips ingest/classify (the CSVs ARE
+    # the classification) and builds the catalog directly from the
+    # CSVs uploaded via /admin/catalog_inputs/upload.
+    "catalog-from-csvs":   ["text2sql", "build-table-catalog-cmd", "--from-csvs"],
     "index":               ["text2sql", "index-catalog"],
     "gold-seed":           ["text2sql", "gold-seed"],
 }
@@ -947,3 +951,108 @@ def save_embedding_connector(c: _EmbeddingConnector) -> dict[str, Any]:
     entry, secrets = _build_embedding_provider_entry(c)
     _persist_provider("embeddings", c.name, entry, secrets, c.set_primary)
     return get_config()
+
+
+# ── Catalog-inputs endpoints (Q3 — operator CSV pivot) ─────────────────────
+
+
+class _CatalogInputsStatus(BaseModel):
+    """What we know about the active provider's catalog inputs.
+
+    `present` is True when both CSVs exist on disk for the active
+    provider; counts come from a parse + validate pass so the UI can
+    confirm the file the operator just uploaded actually parses."""
+
+    present: bool
+    schema_csv_path: str | None = None
+    relationships_csv_path: str | None = None
+    table_count: int | None = None
+    column_count: int | None = None
+    fk_count: int | None = None
+    domain_count: int | None = None
+    error: str | None = None
+
+
+def _catalog_inputs_dir() -> Path:
+    """Active provider's `catalog_inputs/` directory under the per-
+    provider artifact tree. Touching it lazily — the directory is
+    created on first upload, not on import."""
+    from text2sql.config import resolve_artifact_path
+    cfg = load_config()
+    return Path(resolve_artifact_path(cfg, "catalog_inputs/.exists", write=True)).parent
+
+
+@router.get("/catalog_inputs", response_model=_CatalogInputsStatus)
+def get_catalog_inputs() -> _CatalogInputsStatus:
+    """Report whether the active provider has operator CSVs on disk
+    and, if yes, summary counts so the Settings UI can render a green
+    checkmark with `829 tables · 1,663 FKs` style detail."""
+    csv_dir = _catalog_inputs_dir()
+    schema_path = csv_dir / "schema.csv"
+    rel_path = csv_dir / "relationships.csv"
+    if not (schema_path.exists() and rel_path.exists()):
+        return _CatalogInputsStatus(present=False)
+    try:
+        from text2sql.catalog_inputs import CatalogInputs
+        inputs = CatalogInputs.from_csvs(schema_path, rel_path)
+    except Exception as e:
+        return _CatalogInputsStatus(
+            present=True,
+            schema_csv_path=str(schema_path),
+            relationships_csv_path=str(rel_path),
+            error=f"{type(e).__name__}: {e}",
+        )
+    return _CatalogInputsStatus(
+        present=True,
+        schema_csv_path=str(schema_path),
+        relationships_csv_path=str(rel_path),
+        table_count=inputs.table_count,
+        column_count=inputs.column_count,
+        fk_count=inputs.fk_count,
+        domain_count=len(inputs.domains),
+    )
+
+
+@router.post("/catalog_inputs/upload", response_model=_CatalogInputsStatus)
+async def upload_catalog_inputs(
+    schema_csv: UploadFile = File(..., description="Schema CSV (Ranking·Domain·SCHEMA·TABLE·COLUMN·Populated)"),
+    relationships_csv: UploadFile = File(..., description="Relationships CSV (FK_Name·Parent...·Referenced...)"),
+) -> _CatalogInputsStatus:
+    """Upload + validate both operator CSVs in one round trip. Files
+    are validated *before* being persisted — a bad row aborts the
+    upload with a 400 + line-number error rather than half-writing the
+    pair to disk."""
+    from text2sql.catalog_inputs import CatalogInputs
+
+    schema_bytes = await schema_csv.read()
+    rel_bytes = await relationships_csv.read()
+    try:
+        schema_text = schema_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise HTTPException(400, f"schema_csv is not valid UTF-8: {e}") from e
+    try:
+        rel_text = rel_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise HTTPException(400, f"relationships_csv is not valid UTF-8: {e}") from e
+
+    try:
+        inputs = CatalogInputs.from_csvs(schema_text, rel_text)
+    except Exception as e:
+        raise HTTPException(400, f"{type(e).__name__}: {e}") from e
+
+    csv_dir = _catalog_inputs_dir()
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    schema_path = csv_dir / "schema.csv"
+    rel_path = csv_dir / "relationships.csv"
+    schema_path.write_text(schema_text, encoding="utf-8")
+    rel_path.write_text(rel_text, encoding="utf-8")
+
+    return _CatalogInputsStatus(
+        present=True,
+        schema_csv_path=str(schema_path),
+        relationships_csv_path=str(rel_path),
+        table_count=inputs.table_count,
+        column_count=inputs.column_count,
+        fk_count=inputs.fk_count,
+        domain_count=len(inputs.domains),
+    )
