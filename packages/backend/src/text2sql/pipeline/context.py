@@ -170,6 +170,11 @@ class ContextBuilder:
     # ── Identifier quoting per dialect ─────────────────────────────────────────
 
     def _quote_table(self, schema: str, table: str) -> str:
+        if self.dialect == "sqlite":
+            # SQLite has a single (`main`) schema; the catalog's `edfi.X`
+            # FQN doesn't correspond to a real attached schema in the
+            # live DB, so drop the prefix to match steiner.to_join_clauses.
+            return self._quote_id(table)
         return f"{self._quote_id(schema)}.{self._quote_id(table)}"
 
     def _quote_id(self, name: str) -> str:
