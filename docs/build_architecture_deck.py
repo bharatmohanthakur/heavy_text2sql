@@ -381,7 +381,70 @@ def build():
               "for residual stragglers. Reflection of unknown DB tables (P7) handles the case "
               "where the operator's database has 36 extra tables that aren't in the Ed-Fi spec.")
 
-    # ── Slide 8: FK graph + Steiner ───────────────────────────────────────
+    # ── Slide 8: Ingestion flow when target DB diverges from standard Ed-Fi ─
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "Ingesting a non-standard target database",
+                  "Five-step flow when the operator's DB has tables Ed-Fi never specified · "
+                  "e.g. 1,084 in DB vs 1,048 in spec")
+
+    steps = [
+        ("1",
+         "Build standard Ed-Fi knowledge (one-time per DS version)",
+         "Fetch ApiModel.json + 0030-ForeignKeys.sql from Ed-Fi GitHub raw · cache under data/edfi/ · "
+         "4-stage classifier on the full ApiModel produces 829 catalog entries and 1,663 FK edges",
+         GREEN),
+        ("2",
+         "Connect & activate the operator's database",
+         "Operator opens Settings → Database connector form · picks dialect (Postgres / MSSQL / SQLite) "
+         "and enters host + credentials (passwords stored in gitignored runtime_secrets.json) · "
+         "Make active creates a per-provider artifact directory",
+         ACCENT),
+        ("3",
+         "Reflect tables Ed-Fi doesn't know about",
+         "SQLAlchemy Inspector walks the live DB · for each table NOT in ApiModel: reflect columns + types + PK + FKs "
+         "(composite supported) · sample N rows · tag domains=['Other'], is_extension=True · LLM gap-fill writes a description",
+         ACCENT),
+        ("4",
+         "Build per-provider artifacts (no cross-pollution)",
+         "Catalog merges 829 Ed-Fi entries + N reflected entries · graph merges 1,663 Ed-Fi edges + reflected FK edges so "
+         "cross-source joins emerge naturally · embeddings re-indexed · everything stored under "
+         "data/artifacts/per_provider/<provider_name>/",
+         ACCENT),
+        ("5",
+         "Query routes through the unified catalog",
+         "Routing matches Ed-Fi domains OR the 'Other' bucket · hybrid retrieval scores Ed-Fi + reflected tables together · "
+         "Steiner picks join paths across both sources · LLM grounds SQL in real columns from whichever tables matter",
+         GREEN),
+    ]
+    _panel(s, left=0.5, top=1.6, width=12.3, height=5.4, fill=PANEL)
+    y = 1.75
+    for num, title, body, color in steps:
+        # Numbered badge
+        chip = s.shapes.add_shape(MSO_SHAPE.OVAL,
+                                   Inches(0.7), Inches(y), Inches(0.55), Inches(0.55))
+        chip.fill.solid(); chip.fill.fore_color.rgb = color
+        chip.line.fill.background()
+        tb = s.shapes.add_textbox(Inches(0.7), Inches(y), Inches(0.55), Inches(0.55))
+        tf = tb.text_frame; tf.margin_left = tf.margin_right = Inches(0); tf.margin_top = Inches(0.1)
+        _set_text(tf, num, size=18, bold=True, color=BG, align=PP_ALIGN.CENTER)
+        # Title + body
+        _add_text(s, title, left=1.4, top=y - 0.02, width=11.4, height=0.32,
+                  size=13, bold=True, color=TEXT)
+        _add_text(s, body, left=1.4, top=y + 0.32, width=11.4, height=0.65,
+                  size=10, color=MUTED)
+        y += 1.04
+
+    _footer(s, "Knowledge · Non-standard ingest flow",
+            "test_catalog_reflect_unknown.py · 8 cases green")
+    _notes(s, "This is the answer to 'what if my database has tables that aren't in the Ed-Fi spec?' "
+              "Step 3 (reflection) is the key insight — we don't require the operator to write a "
+              "schema-mapping config. SQLAlchemy's Inspector walks the live DB, anything we don't "
+              "recognize gets reflected with composite FKs and sample rows, then merges into the "
+              "same per-provider catalog the Ed-Fi tables live in. Per-provider artifact isolation "
+              "(N1-N5) means switching from one operator DB to another flips a different set of "
+              "files in — no stale state from the previous DB leaks into the next one.")
+
+    # ── Slide 9 (was 8): FK graph + Steiner ───────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
     _add_title(s, "Foreign-Key Graph + JOIN solver",
                   "1,663 edges · 829×829 APSP precomputed · KMB Steiner approximation")
