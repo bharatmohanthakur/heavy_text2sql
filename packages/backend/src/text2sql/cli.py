@@ -170,23 +170,53 @@ def map_tables_cmd(
 def build_fk_graph(
     classification: Path = typer.Option(Path("data/artifacts/table_classification.json")),
     out: Path = typer.Option(Path("data/artifacts/graph")),
+    from_csvs: bool = typer.Option(
+        False, "--from-csvs",
+        help="Source FK edges from the operator Relationships CSV in the active "
+             "provider's artifact dir instead of the Ed-Fi manifest.",
+    ),
 ) -> None:
     """Component 3: parse FKs → build graph → APSP → persist artifacts."""
     from text2sql.classification import read_table_mapping
     from text2sql.graph import build_graph, parse_fks, save_graph
 
     cfg = load_config()
-    ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest_path = ic.cache_dir / "manifest.json"
-    if not manifest_path.exists():
-        typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
-        sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
 
-    edges = []
-    for art in manifest.artifacts:
-        edges.extend(parse_fks(art.foreign_keys_sql_path))
-    typer.echo(f"Parsed {len(edges)} FK edges")
+    edges: list = []
+    if from_csvs:
+        # Operator-CSV pivot path (Q3): FK edges come straight from the
+        # validated relationships.csv. Same FKEdge dataclass shape as
+        # the sqlglot-parsed Ed-Fi edges, so the graph builder is happy.
+        from text2sql.catalog_inputs import CatalogInputs
+        from text2sql.config import resolve_artifact_path
+        csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
+        schema_csv = csv_dir / "schema.csv"
+        rel_csv = csv_dir / "relationships.csv"
+        if not (schema_csv.exists() and rel_csv.exists()):
+            typer.echo(
+                f"Operator CSVs not found in {csv_dir}. "
+                f"Run `text2sql ingest-csvs` first.",
+                err=True,
+            )
+            sys.exit(1)
+        inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
+        edges = list(inputs.fk_edges)
+        typer.echo(f"Parsed {len(edges)} FK edges from operator CSV")
+        # Synthesize classifications too so edge-weighting only sees
+        # the operator's tables — not stale 829-row Ed-Fi data.
+        from text2sql.catalog_inputs import synthesize_inputs_for_builder
+        _, csv_classifications, _ = synthesize_inputs_for_builder(inputs)
+    else:
+        ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
+        manifest_path = ic.cache_dir / "manifest.json"
+        if not manifest_path.exists():
+            typer.echo("No ingest manifest. Run `text2sql ingest` first, "
+                       "or pass --from-csvs to use operator CSVs.", err=True)
+            sys.exit(1)
+        manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        for art in manifest.artifacts:
+            edges.extend(parse_fks(art.foreign_keys_sql_path))
+        typer.echo(f"Parsed {len(edges)} FK edges")
 
     # Extension: reflect FKs from the live target DB and merge in any
     # constraints that aren't in 0030-ForeignKeys.sql (covers tables
@@ -212,13 +242,17 @@ def build_fk_graph(
     except Exception as e:
         typer.echo(f"(skipping live-DB FK reflection: {e})", err=True)
 
-    classifications = []
-    cl_path = REPO_ROOT / classification
-    if cl_path.exists():
-        classifications = read_table_mapping(cl_path).classifications
-        typer.echo(f"Using {len(classifications)} classifications for edge weighting")
+    if from_csvs:
+        classifications = csv_classifications
+        typer.echo(f"Using {len(classifications)} CSV-synthesized classifications for edge weighting")
     else:
-        typer.echo("(no classification file — using default edge weights)")
+        classifications = []
+        cl_path = REPO_ROOT / classification
+        if cl_path.exists():
+            classifications = read_table_mapping(cl_path).classifications
+            typer.echo(f"Using {len(classifications)} classifications for edge weighting")
+        else:
+            typer.echo("(no classification file — using default edge weights)")
 
     g = build_graph(edges, classifications=classifications)
     typer.echo(f"Graph: {len(g.nodes)} nodes, {len(g.edges)} undirected edges")
