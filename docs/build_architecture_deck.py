@@ -147,16 +147,17 @@ def build():
     _add_text(s, "Ask questions of your school data in plain English",
               left=0.8, top=3.15, width=11.7, height=0.6,
               size=22, color=TEXT)
-    _add_text(s, "Progress update — foundation delivered, integration ahead",
+    _add_text(s, "Progress update — early foundation in place, most work still ahead",
               left=0.8, top=3.85, width=11.7, height=0.5,
               size=16, color=MUTED)
     _add_text(s, "Apr 30, 2026  ·  client review  ·  target demo Fri May 8",
               left=0.8, top=6.6, width=11.7, height=0.4,
               size=13, color=MUTED)
-    _notes(s, "Set the room: this is a status update, not a final review. Two big technical "
-              "pieces are done — the semantic schema layer and the foreign-key graph. Those are "
-              "the foundation everything else sits on. Today I'll show what each is, what it "
-              "unlocks, and the concrete plan to demo by Friday May 8.")
+    _notes(s, "Set the room: this is a status update, not a final review. Only the auto-grouping "
+              "(cluster-creation) piece is functionally complete today; the semantic schema and "
+              "foreign-key graph have working scaffolding but are still being tuned, and the rest "
+              "of the pipeline is in flight. Today I'll show what each piece does, what's actually "
+              "complete vs. in progress, and the concrete plan to demo by Friday May 8.")
 
     # ── Slide 2: The problem ──────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -189,40 +190,42 @@ def build():
 
     # ── Slide 3: Status snapshot ──────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Status: foundation built, integration ahead",
-                  "Two of seven workstreams complete; remaining five planned for the next 7 working days")
+    _add_title(s, "Status: early foundation in place, most work in flight",
+                  "Cluster-creation is the only complete workstream today; everything else is in progress for the 7-day push to demo")
 
     rows = [
-        ("Foreign-Key Graph",       "Done",  GREEN,
-         "Maps how every Ed-Fi table connects to every other; computes the cheapest joins."),
-        ("Semantic Schema Layer",   "Done",  GREEN,
-         "Embeds each table's meaning so questions can find the right tables."),
-        ("Question → SQL pipeline", "Next",  AMBER,
+        ("Cluster Creation",         "Done",        GREEN,
+         "Auto-groups Ed-Fi tables into navigable clusters used by routing and the cluster manager."),
+        ("Foreign-Key Graph",        "In progress", AMBER,
+         "Working scaffolding for join discovery; weights and edge cases still being tuned."),
+        ("Semantic Schema Layer",    "In progress", AMBER,
+         "Per-table profiles + embeddings landing; coverage and accuracy tuning ongoing."),
+        ("Question → SQL pipeline",  "In progress", AMBER,
          "Wire graph + semantics into a routed, validated SQL generator with auto-repair."),
-        ("Validation & Repair",     "Next",  AMBER,
+        ("Validation & Repair",      "In progress", AMBER,
          "Catch bad SQL before execution; auto-fix the common failure modes."),
-        ("Charts & Descriptions",    "Next",  AMBER,
+        ("Charts & Descriptions",    "In progress", AMBER,
          "Pick the right visualization automatically; explain the answer in English."),
-        ("Web UI · Settings · Eval","Next",  AMBER,
+        ("Web UI · Settings · Eval", "In progress", AMBER,
          "Browser experience, operator controls, accuracy dashboards."),
-        ("Hardening & Demo",         "Next",  AMBER,
+        ("Hardening & Demo",         "In progress", AMBER,
          "Multi-provider polish, observability, recorded demo on a clean machine."),
     ]
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.2, fill=PANEL)
     y = 1.75
     for label, status, color, what in rows:
-        _add_text(s, label, left=0.8, top=y, width=4.0, height=0.35,
-                  size=14, bold=True, color=TEXT)
+        _add_text(s, label, left=0.8, top=y, width=4.0, height=0.32,
+                  size=13, bold=True, color=TEXT)
         _status_chip(s, left=4.95, top=y + 0.02, label=status, color=color)
-        _add_text(s, what, left=6.4, top=y + 0.02, width=6.4, height=0.35,
-                  size=12, color=MUTED)
-        y += 0.72
+        _add_text(s, what, left=6.4, top=y + 0.02, width=6.4, height=0.32,
+                  size=11, color=MUTED)
+        y += 0.62
 
-    _footer(s, "Status snapshot", "Two of seven complete · 7 working days to demo")
-    _notes(s, "This single slide is the headline. The two foundational pieces are done — the parts "
-              "that take longest to get right because they involve schema modeling and embeddings. "
-              "Everything else is integration: hooking those pieces together, polishing the UX, "
-              "and verifying accuracy. That's why a 7-working-day plan is realistic.")
+    _footer(s, "Status snapshot", "1 of 8 complete · 7 working days to demo")
+    _notes(s, "This single slide is the headline. Cluster Creation is the only workstream that's "
+              "functionally complete; the semantic schema and foreign-key graph have scaffolding "
+              "but are still being tuned, and everything else is integration work in flight. "
+              "That's why the 7-working-day plan is intentionally aggressive but bounded.")
 
     # ── Slide 4: System map ───────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -231,44 +234,104 @@ def build():
 
     layers = [
         ("Question",     ["Analyst types: 'How many Hispanic students enrolled in Grade 9 last year?'"], MUTED),
+        ("Cluster Creation",
+         ["Auto-groups Ed-Fi tables into navigable clusters",
+          "Provides the routing buckets the next layers search inside"], GREEN),
         ("Semantic Schema",
          ["Finds the small set of tables that matter — out of 1,048",
-          "Resolves real-world terms (e.g. 'Hispanic') to the right code in the right table"], GREEN),
+          "Resolves real-world terms (e.g. 'Hispanic') to the right code in the right table"], AMBER),
         ("Foreign-Key Graph",
          ["Computes the cheapest join path between those tables",
-          "Hands the SQL generator ready-to-use JOIN clauses"], GREEN),
+          "Hands the SQL generator ready-to-use JOIN clauses"], AMBER),
         ("SQL · Validate · Run",
          ["LLM writes SQL grounded in real columns",
           "Validator catches errors; repair loop fixes them; engine executes"], AMBER),
         ("Answer",
          ["Rows + auto-picked chart + plain-English summary, with the tables cited"], AMBER),
     ]
-    y = 1.6
+    y = 1.4
     for label, lines, color in layers:
-        _panel(s, left=0.5, top=y, width=12.3, height=0.95, fill=PANEL)
+        _panel(s, left=0.5, top=y, width=12.3, height=0.85, fill=PANEL)
         _add_text(s, label, left=0.7, top=y + 0.1, width=2.7, height=0.4,
-                  size=14, bold=True, color=color)
+                  size=13, bold=True, color=color)
         for j, ln in enumerate(lines):
-            _add_text(s, "• " + ln, left=3.4, top=y + 0.1 + j * 0.32, width=9.2, height=0.4,
-                      size=12, color=TEXT)
-        y += 1.10
+            _add_text(s, "• " + ln, left=3.4, top=y + 0.08 + j * 0.30, width=9.2, height=0.4,
+                      size=11, color=TEXT)
+        y += 0.95
 
-    _add_text(s, "Green = built today  ·  Amber = next 7 working days",
+    _add_text(s, "Green = complete today  ·  Amber = in progress, targeted for the 7-day push",
               left=0.5, top=7.05, width=12.3, height=0.3,
               size=11, color=MUTED, align=PP_ALIGN.CENTER)
-    _notes(s, "Walk top-to-bottom. Pause on the Semantic Schema and Foreign-Key Graph rows — "
-              "those are this deck's protagonists. The bottom rows are next-week work.")
+    _notes(s, "Walk top-to-bottom. Cluster Creation is the only green row — the rest are working "
+              "scaffolding being tuned and integrated. That's the honest read of where we are.")
 
-    # ── Slide 5: Section divider — Semantic ───────────────────────────────
+    # ── Slide 5a: Section divider — Cluster Creation (only completed piece) ──
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "What's built · 1 of 2", left=0.8, top=2.5, width=11.7, height=0.5,
+    _add_text(s, "What's complete today", left=0.8, top=2.5, width=11.7, height=0.5,
+              size=18, color=MUTED)
+    _add_text(s, "Cluster Creation", left=0.8, top=3.05, width=11.7, height=1.0,
+              size=44, bold=True, color=GREEN)
+    _add_text(s, "Auto-grouping Ed-Fi tables into navigable, query-ready clusters",
+              left=0.8, top=4.05, width=11.7, height=0.5, size=18, color=TEXT)
+    _add_text(s, "Cluster IDs stable across rebuilds · cluster names + descriptions cached",
+              left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
+    _notes(s, "Cluster Creation is the one workstream that's functionally complete: every Ed-Fi "
+              "table lands in a cluster, clusters carry stable IDs across rebuilds, and the cluster "
+              "manager UI consumes them. The rest of the deck is in-progress work that depends on "
+              "this foundation.")
+
+    # ── Slide 5b: Cluster Creation — what it produces ──────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "What Cluster Creation produces",
+                  "The bucket structure every later layer routes inside")
+
+    _panel(s, left=0.5, top=1.6, width=6.0, height=5.2, fill=PANEL)
+    _add_text(s, "By the numbers", left=0.7, top=1.7, width=5.6, height=0.4,
+              size=16, bold=True, color=ACCENT)
+    rows = [
+        ("Tables clustered",          "1,048"),
+        ("Top-level domains",          "35"),
+        ("Auto sub-clusters",          "tuned per domain"),
+        ("Cluster manager",            "drag-to-reassign"),
+        ("ID stability across rebuild","Hungarian-matched"),
+        ("Output artifact",            "table_classification.json"),
+    ]
+    y = 2.15
+    for k, v in rows:
+        _add_text(s, k, left=0.7, top=y, width=3.4, height=0.34, size=13, color=MUTED)
+        _add_text(s, v, left=4.1, top=y, width=2.0, height=0.34, size=12, bold=True, color=TEXT)
+        y += 0.55
+
+    _panel(s, left=6.85, top=1.6, width=6.0, height=5.2, fill=PANEL)
+    _add_text(s, "Why this is the foundation",
+              left=7.05, top=1.7, width=5.6, height=0.4, size=16, bold=True, color=GREEN)
+    _bullets(s, [
+        "Clusters give the routing layers a fast, navigable index — search inside a cluster, not 1,048 tables",
+        "Stable IDs across rebuilds protect saved queries and dashboards",
+        "Clusters surface in the UI so analysts and operators share the same mental model",
+        "Sub-clusters keep oversize domains (Student, Assessment, Discipline) tractable",
+        "Every later layer — semantic, graph, validation — assumes this structure",
+    ], left=7.05, top=2.15, width=5.6, height=4.5, size=12)
+
+    _footer(s, "Complete — Cluster Creation", "1 of 8 workstreams")
+    _notes(s, "Two ideas: clusters compress 1,048 tables into a structure the rest of the platform "
+              "can search efficiently, and the IDs stay stable across rebuilds so analyst-facing "
+              "artifacts (saved queries, dashboards, gold pairs) don't break when we re-cluster.")
+
+    # ── Slide 6 (formerly): Section divider — Semantic ────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_text(s, "In progress · semantic schema layer", left=0.8, top=2.5, width=11.7, height=0.5,
               size=18, color=MUTED)
     _add_text(s, "The Semantic Schema Layer", left=0.8, top=3.05, width=11.7, height=1.0,
-              size=44, bold=True, color=GREEN)
+              size=44, bold=True, color=AMBER)
     _add_text(s, "How the platform finds the right tables for an English question",
               left=0.8, top=4.05, width=11.7, height=0.5, size=18, color=TEXT)
+    _add_text(s, "Scaffolding running end-to-end on the demo DB; coverage and accuracy still being tuned",
+              left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
     _notes(s, "If we just gave the LLM 1,048 tables and asked it to pick, accuracy would collapse "
-              "and cost would explode. The semantic layer is the search index that fixes that.")
+              "and cost would explode. The semantic layer is the search index that fixes that. "
+              "Today: per-table profiles + embeddings work end-to-end on the demo DB; next 7 days: "
+              "tune coverage on the full 1,048-table model and harden the routing thresholds.")
 
     # ── Slide 6: Per-table understanding ──────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -317,7 +380,7 @@ def build():
         "Proven-query count biases the search toward tables the platform has answered before",
     ], left=8.35, top=2.15, width=4.4, height=4.5, size=11)
 
-    _footer(s, "Built — Semantic Schema · 1 of 3", "")
+    _footer(s, "In progress — Semantic Schema · 1 of 3", "")
     _notes(s, "Each of the 1,048 tables has this kind of profile, captured at build time. The "
               "profile is then turned into a numerical fingerprint (an embedding) that the "
               "platform can match against any incoming question.")
@@ -345,7 +408,7 @@ def build():
         "Hand them to the graph layer to figure out how to join them",
     ], left=0.7, top=5.05, width=12, height=2.0, size=12)
 
-    _footer(s, "Built — Semantic Schema · 2 of 3", "")
+    _footer(s, "In progress — Semantic Schema · 2 of 3", "")
     _notes(s, "Two-stage search. Without it, accuracy on 1,048 tables drops below useful. With it, "
               "we routinely route to the correct 3–8 tables for an Ed-Fi question.")
 
@@ -379,22 +442,26 @@ def build():
         _add_text(s, perf, left=11.0, top=y, width=1.8, height=0.32, size=12, color=GREEN, align=PP_ALIGN.RIGHT)
         y += 0.55
 
-    _footer(s, "Built — Semantic Schema · 3 of 3", "Tier 1+2 handle ~95% of cases")
+    _footer(s, "In progress — Semantic Schema · 3 of 3", "Tier 1+2 expected to handle ~95% of cases")
     _notes(s, "This is the layer that turns 'plain English' into 'database-correct'. Without it, "
               "questions like 'last year', 'Grade 9', or 'free-and-reduced lunch' would never "
               "land on the right rows.")
 
     # ── Slide 9: Section divider — Graph ──────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "What's built · 2 of 2", left=0.8, top=2.5, width=11.7, height=0.5,
+    _add_text(s, "In progress · foreign-key graph", left=0.8, top=2.5, width=11.7, height=0.5,
               size=18, color=MUTED)
     _add_text(s, "The Foreign-Key Graph", left=0.8, top=3.05, width=11.7, height=1.0,
-              size=44, bold=True, color=GREEN)
+              size=44, bold=True, color=AMBER)
     _add_text(s, "How the platform figures out which JOINs make sense",
               left=0.8, top=4.05, width=11.7, height=0.5, size=18, color=TEXT)
+    _add_text(s, "Working on the demo DB; weights, edge cases, and unknown-table handling still being tuned",
+              left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
     _notes(s, "If semantic gives us 'these 5 tables', graph tells us 'this is the cheapest, "
               "most natural way to connect them'. Without it, even an LLM that knows Ed-Fi "
-              "well would burn time guessing join paths.")
+              "well would burn time guessing join paths. Today: shortest-path + Steiner-tree "
+              "scaffolding running on the demo DB. Next 7 days: tune weights on the full Ed-Fi "
+              "model and verify behavior on the unknown-table reflection path.")
 
     # ── Slide 10: What the graph contains ─────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -432,7 +499,7 @@ def build():
     _add_text(s, "Net effect: joins follow the natural shape of Ed-Fi.",
               left=7.05, top=6.2, width=5.6, height=0.4, size=12, color=GREEN)
 
-    _footer(s, "Built — Foreign-Key Graph · 1 of 2", "")
+    _footer(s, "In progress — Foreign-Key Graph · 1 of 2", "")
     _notes(s, "Two ideas to leave the room with: the graph is small (10 MB) and fast (millisecond "
               "responses), and the weighting biases it to keep joins inside the natural Ed-Fi "
               "boundaries — which is also what a senior analyst would do by hand.")
@@ -454,22 +521,22 @@ def build():
     rows = [
         ("Connecting 2 tables",
          "Bidirectional shortest-path; returns three alternatives so the model picks the most readable",
-         "<5 ms",  GREEN),
+         "target <5 ms",  AMBER),
         ("Connecting 3–8 tables",
          "Steiner-tree approximation (KMB) — provably within 2× of optimal",
-         "<50 ms", GREEN),
+         "target <50 ms", AMBER),
         ("Edge cases (>8 tables)",
          "Greedy fallback; rare on real Ed-Fi questions",
-         "<200 ms", AMBER),
+         "target <200 ms", AMBER),
     ]
     y = 3.8
     for label, what, perf, color in rows:
         _add_text(s, label, left=0.7, top=y, width=3.6, height=0.34, size=13, bold=True, color=TEXT)
         _add_text(s, what, left=4.4, top=y, width=6.7, height=0.7, size=12, color=MUTED)
-        _add_text(s, perf, left=11.2, top=y + 0.3, width=1.7, height=0.34, size=12, color=color, align=PP_ALIGN.RIGHT)
+        _add_text(s, perf, left=10.6, top=y + 0.3, width=2.3, height=0.34, size=12, color=color, align=PP_ALIGN.RIGHT)
         y += 1.0
 
-    _footer(s, "Built — Foreign-Key Graph · 2 of 2", "")
+    _footer(s, "In progress — Foreign-Key Graph · 2 of 2", "")
     _notes(s, "Don't dwell on KMB by name. The takeaway is: this is solved, fast, and we have "
               "fallbacks so the platform never freezes on an unusual question.")
 
