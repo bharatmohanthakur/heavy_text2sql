@@ -29,6 +29,10 @@ from text2sql.catalog_inputs.schema_csv import (
     SchemaCsvError,
     parse_schema_csv,
 )
+from text2sql.catalog_inputs.synthesizer import (
+    synthesize_inputs_for_builder,
+    synthesize_metadata,
+)
 
 __all__ = [
     "CatalogInputs",
@@ -37,4 +41,6 @@ __all__ = [
     "SchemaCsvError",
     "parse_relationships_csv",
     "parse_schema_csv",
+    "synthesize_inputs_for_builder",
+    "synthesize_metadata",
 ]
