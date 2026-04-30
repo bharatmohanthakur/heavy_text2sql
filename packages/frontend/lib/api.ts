@@ -3,6 +3,18 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
 
+export type HealthResponse = {
+  status: string;
+  tables: number;
+  domains: number;
+  gold_store: boolean;
+  // P1: surface which provider's catalog is currently loaded so the UI
+  // can show "Active: my-sqlite-demo · sqlite · 18 tables" and key its
+  // table fetches on a switch. Empty strings mean a legacy flat catalog.
+  provider_name: string;
+  target_dialect: string;
+};
+
 export type DomainScore = { name: string; table_count: number };
 
 export type TableSummary = {
@@ -118,9 +130,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; tables: number; domains: number; gold_store: boolean }>(
-    "/health",
-  ),
+  health: () => request<HealthResponse>("/health"),
 
   query: (question: string, max_rows = 100) =>
     request<QueryResponse>("/query", {

@@ -3,16 +3,21 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, TableDetail } from "@/lib/api";
+import { ActiveProviderBadge, useActiveProvider } from "@/lib/useActiveProvider";
 import { RowsTable } from "@/components/RowsTable";
 
 export default function TableDetailPage({ params }: { params: { fqn: string } }) {
   const fqn = decodeURIComponent(params.fqn);
   const [t, setT] = useState<TableDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const health = useActiveProvider();
+  const providerKey = health?.provider_name ?? "";
 
   useEffect(() => {
+    setError(null);
+    setT(null);
     api.table(fqn).then(setT).catch((e) => setError(String(e)));
-  }, [fqn]);
+  }, [fqn, providerKey]);
 
   if (error) return <div className="text-red-400 text-sm">{error}</div>;
   if (!t) return <div className="text-muted text-sm">Loading…</div>;
@@ -20,7 +25,10 @@ export default function TableDetailPage({ params }: { params: { fqn: string } })
   return (
     <div className="space-y-5">
       <div>
-        <Link href="/tables" className="text-xs text-muted">← back to tables</Link>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <Link href="/tables" className="text-xs text-muted">← back to tables</Link>
+          <ActiveProviderBadge health={health} />
+        </div>
         <h1 className="text-xl font-semibold mt-1">{t.fqn}</h1>
         <p className="text-sm text-muted max-w-3xl mt-1">{t.description}</p>
         <div className="mt-2 flex flex-wrap items-center gap-1">

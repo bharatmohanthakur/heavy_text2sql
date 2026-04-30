@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminConfig, JobStatus, api, streamJob } from "@/lib/api";
+import { ActiveProviderBadge, useActiveProvider } from "@/lib/useActiveProvider";
 
 /* Settings — three connector forms (Database, LLM, Embedding) plus a
  * Rebuild panel. Each form takes the kind, the credential fields, runs
@@ -44,6 +45,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 export default function SettingsPage() {
   const [config, setConfig] = useState<AdminConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const health = useActiveProvider();
 
   function refresh() {
     api.adminConfig().then(setConfig).catch((e) => setError(String(e)));
@@ -64,7 +66,10 @@ export default function SettingsPage() {
       </header>
 
       <div className="border border-border rounded-lg p-4 bg-panel/40">
-        <div className="text-xs text-muted">Active selections</div>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-xs text-muted">Active selections</div>
+          <ActiveProviderBadge health={health} />
+        </div>
         <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
           <ActiveBadge label="Target DB" value={config.target_db.primary} />
           <ActiveBadge label="Metadata DB" value={String(config.metadata_db?.kind ?? "—")} />
@@ -72,6 +77,12 @@ export default function SettingsPage() {
           <ActiveBadge label="Embedding" value={config.embeddings.primary} />
           <ActiveBadge label="Vector store" value={config.vector_store.primary} />
         </div>
+        {health && health.provider_name && health.provider_name !== config.target_db.primary && (
+          <div className="mt-3 text-xs text-amber-400">
+            Note: catalog still references provider <code className="font-mono">{health.provider_name}</code>.
+            Click Rebuild below to refresh artifacts for the newly active provider.
+          </div>
+        )}
       </div>
 
       <DatabaseConnectorForm config={config} onSaved={refresh} />

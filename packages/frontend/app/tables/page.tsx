@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, TableSummary, DomainScore } from "@/lib/api";
+import { ActiveProviderBadge, useActiveProvider } from "@/lib/useActiveProvider";
 
 export default function TablesPage() {
   const [tables, setTables] = useState<TableSummary[]>([]);
@@ -11,10 +12,12 @@ export default function TablesPage() {
   const [domainFilter, setDomainFilter] = useState<string>("");
   const [showDescriptors, setShowDescriptors] = useState(false);
   const [loading, setLoading] = useState(true);
+  const health = useActiveProvider();
+  const providerKey = health?.provider_name ?? "";
 
   useEffect(() => {
     api.domains().then((d) => setDomains(d.domains)).catch(() => undefined);
-  }, []);
+  }, [providerKey]);
 
   useEffect(() => {
     setLoading(true);
@@ -26,7 +29,7 @@ export default function TablesPage() {
       })
       .then((r) => setTables(r.tables))
       .finally(() => setLoading(false));
-  }, [domainFilter, showDescriptors]);
+  }, [domainFilter, showDescriptors, providerKey]);
 
   const visible = tables.filter((t) =>
     !filter || t.fqn.toLowerCase().includes(filter.toLowerCase()),
@@ -34,7 +37,10 @@ export default function TablesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Tables</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-xl font-semibold">Tables</h1>
+        <ActiveProviderBadge health={health} />
+      </div>
       <div className="flex flex-wrap gap-3 items-center">
         <input
           className="bg-panel border border-border rounded px-3 py-1.5 text-sm w-64"
