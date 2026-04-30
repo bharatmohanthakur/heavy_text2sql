@@ -8,9 +8,10 @@ Produces docs/architecture_deck.pptx.
 Audience: client / business stakeholder. Frame the work in outcomes,
 not file paths. Status is grounded in the actual repo audit (Apr 30
 2026): 13 core components built and tested; agent loop and frontend
-shipped; remaining 11 working days target Leiden sub-clustering,
-observability, multi-provider matrix tests, and a recorded demo for
-the v0.9 release on Sat May 16.
+shipped; remaining 6 working weeks target Leiden sub-clustering,
+multi-provider matrix tests, agentic polish, observability,
+performance, documentation, and a recorded demo for the v0.9
+release on Fri June 13.
 """
 from __future__ import annotations
 
@@ -147,18 +148,21 @@ def build():
     _add_text(s, "Ask questions of your school data in plain English",
               left=0.8, top=3.15, width=11.7, height=0.6,
               size=22, color=TEXT)
-    _add_text(s, "Architecture review · platform built · 11 working days to v0.9 release",
+    _add_text(s, "Architecture review · platform built · 6 working weeks to v0.9 release",
               left=0.8, top=3.85, width=11.7, height=0.5,
               size=16, color=MUTED)
-    _add_text(s, "Apr 30, 2026  ·  client review  ·  v0.9 release Sat May 16",
+    _add_text(s, "Apr 30, 2026  ·  client review  ·  v0.9 release Fri June 13",
               left=0.8, top=6.6, width=11.7, height=0.4,
               size=13, color=MUTED)
     _notes(s, "Set the room: this is an architecture-and-status review. The platform's foundation "
               "is built — knowledge layer, NL→SQL pipeline, agent loop, API, frontend, and ops "
-              "tooling are all functionally complete and tested. The next 11 working days "
-              "(Apr 30 through Fri May 15, weekends + May 1 holiday excluded) close the loop on "
-              "agentic polish, multi-provider hardening, observability, and a recorded demo. "
-              "v0.9 release is tagged Sat May 16.")
+              "tooling are all functionally complete and tested. The next six working weeks "
+              "(Apr 30 through Fri June 12, weekends + May 1 holiday excluded) close the loop on "
+              "agentic polish, multi-provider hardening, observability, performance, recorded "
+              "demo, and documentation. v0.9 release is tagged Fri June 13. The honest reason "
+              "the timeline runs to mid-June: the punch list is real work — provider matrix tests "
+              "alone span 5 LLMs × 4 embeddings × 3 dialects × 4 consumers — and we've baked in "
+              "buffer for the inevitable surprises rather than booking a heroics-only plan.")
 
     # ── Slide 2: The problem ──────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -175,7 +179,7 @@ def build():
     ], left=0.7, top=2.1, width=11.9, height=1.6, size=13)
 
     _panel(s, left=0.5, top=3.9, width=12.3, height=2.9, fill=PANEL)
-    _add_text(s, "What we're delivering by Sat May 16",
+    _add_text(s, "What we're delivering by Fri June 13",
               left=0.7, top=4.0, width=11.9, height=0.4, size=14, bold=True, color=GREEN)
     _bullets(s, [
         "Type a question in English  →  receive correct SQL, the rows it returns, a chart, and a written summary",
@@ -195,7 +199,7 @@ def build():
     # ── Slide 3: Status snapshot ──────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
     _add_title(s, "Status: foundation built, polish ahead",
-                  "13 core components green and tested · 4 workstreams remaining for v0.9 on May 16")
+                  "13 core components green and tested · 4 workstreams remaining for v0.9 on Fri June 13")
 
     rows = [
         ("Knowledge layer",
@@ -218,7 +222,7 @@ def build():
          "Refines oversize Ed-Fi domains into 8–20-table clusters for sharper routing; static taxonomy works today"),
         ("Multi-provider matrix tests",
          "In flight", AMBER,
-         "5 LLM providers + 4 embedding providers wired; cross-product regression matrix lands by May 16"),
+         "5 LLM providers + 4 embedding providers wired; cross-product regression matrix lands by June 13"),
         ("Agentic polish",
          "In flight", AMBER,
          "Tool reliability, streaming UX refinements, more agent tools (chart export, eval drilldown)"),
@@ -236,11 +240,13 @@ def build():
                   size=10, color=MUTED)
         y += 0.58
 
-    _footer(s, "Status snapshot", "v0.9 release · Sat May 16, 2026")
+    _footer(s, "Status snapshot", "v0.9 release · Fri June 13, 2026")
     _notes(s, "This is the headline. Five rows green = foundation done; three amber = active work "
-              "the team finishes by May 16; one red = stretch item that may slip into v0.10. The "
-              "shift from May 8 to May 16 buys time for the multi-provider matrix and the agentic "
-              "polish — the agent loop core is working today, but we want demo-grade reliability.")
+              "the team finishes by June 13; one red = stretch item that may slip into v0.10. "
+              "The honest 6-week timeline (vs the original May 8) reflects the real punch list: "
+              "provider matrix tests across the full 5 × 4 × 3 × 4 grid, Leiden tuning that "
+              "needs iteration, observability work that touches every stage, and a recorded demo "
+              "we want to be able to ship without disclaimers.")
 
     # ── Slide 4: System map ───────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -270,7 +276,7 @@ def build():
                       size=11, color=TEXT)
         y += h + 0.08
 
-    _add_text(s, "Every layer is built and tested today; the work to May 16 is polish and recorded demo",
+    _add_text(s, "Every layer is built and tested today; the work to Fri June 13 is polish, hardening, and recorded demo",
               left=0.5, top=7.05, width=12.3, height=0.3,
               size=11, color=MUTED, align=PP_ALIGN.CENTER)
     _notes(s, "Walk top-to-bottom. Each row corresponds to a tested module set in the repo. "
@@ -614,7 +620,7 @@ def build():
         _add_text(s, v, left=10.4, top=y, width=2.4, height=0.32, size=11,
                   color=MUTED, align=PP_ALIGN.RIGHT)
         y += 0.55
-    _add_text(s, "Cross-product regression matrix lands by May 16",
+    _add_text(s, "Cross-product regression matrix lands by June 13",
               left=7.05, top=5.4, width=5.6, height=0.32, size=11, color=AMBER)
 
     _footer(s, "Agentic · Conversations & Providers",
@@ -714,10 +720,10 @@ def build():
     _notes(s, "These are the pieces that make the platform actually usable on day one — and the "
               "reason a fresh git clone can demo without a populated database.")
 
-    # ── Slide 19: What ships next (May 16 release) ────────────────────────
+    # ── Slide 19: What ships next (Jun 13 release) ────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
     _add_title(s, "What ships in the v0.9 release",
-                  "11 working days of focused polish · then tag and announce")
+                  "6 working weeks of focused polish · then tag and announce")
 
     items = [
         ("Auto sub-clustering (Leiden)",
@@ -738,7 +744,7 @@ def build():
          "spans and metrics are next. May slip to v0.10 if matrix work runs long."),
         ("Recorded demo + release cut",
          "AMBER",
-         "End-to-end recording on a clean Mac and Windows machine; v0.9 tag pushed Sat May 16; "
+         "End-to-end recording on a clean Mac and Windows machine; v0.9 tag pushed Fri June 13; "
          "release notes + operator runbook + provider-swap guide finalized."),
     ]
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.4, fill=PANEL)
@@ -751,94 +757,92 @@ def build():
         y += 1.05
 
     _footer(s, "Plan · Section 6", "")
-    _notes(s, "The honest framing: most of the platform is already built. The May 16 date buys "
-              "headroom to land the things that matter for a confident demo — provider matrix, "
-              "agent reliability, and a recorded walkthrough. Observability is the stretch item; "
-              "if multi-provider work runs long, OTel slips to v0.10 without affecting the demo.")
+    _notes(s, "The honest framing: most of the platform is already built. The June 13 date buys "
+              "real headroom to land the things that matter for a confident demo — provider "
+              "matrix, agent reliability, observability, performance, and a recorded walkthrough. "
+              "If observability runs long it slips to v0.10 cleanly without affecting the demo.")
 
-    # ── Slide 20: Day-by-day plan ─────────────────────────────────────────
+    # ── Slide 20: Phased plan to release ──────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Day-by-day plan",
-                  "Apr 30 → Fri May 15 · 11 working days · v0.9 release Sat May 16")
+    _add_title(s, "Phased plan to v0.9",
+                  "Six working weeks · Apr 30 → Fri June 12 · release tag Fri June 13")
 
-    days = [
-        ("Thu Apr 30",
-         "Multi-provider regression matrix — kickoff",
-         ["Lock the matrix shape: 5 LLMs × 4 embeddings × 3 dialects × 4 consumers",
-          "Stand up CI fixture set; run agent loop against Anthropic + Bedrock first"]),
-        ("Mon May 4",
-         "Multi-provider matrix — coverage",
-         ["Add Azure OpenAI + OpenAI + OpenRouter coverage; capture per-provider regressions",
-          "Patch agent translator layer for any newly surfaced gaps"]),
-        ("Tue May 5",
-         "Auto sub-clustering (Leiden) inside oversize domains",
-         ["Build affinity matrix (cosine + graph proximity + name jaccard)",
-          "Tune Leiden for 8–20 tables/cluster; LLM auto-naming for sub-clusters",
-          "Hungarian assignment for cluster-ID stability across rebuilds"]),
-        ("Wed May 6",
-         "Agentic polish — tool reliability + UX",
-         ["Tool-call retries on transient provider errors; structured failure surfaces",
-          "Streaming UX refinements; chart-export and eval-drilldown agent tools",
-          "Conversation list polish (rename, archive, filter)"]),
-        ("Thu May 7",
+    phases = [
+        ("Week 1",  "Apr 30 + May 4–8",
+         "Provider matrix + Leiden — kickoff",
+         GREEN,
+         ["Lock matrix shape: 5 LLMs × 4 embeddings × 3 dialects × 4 consumers; CI fixtures",
+          "Run agent + chat against Anthropic, Bedrock first; patch translator gaps",
+          "Spike Leiden auto-clustering on oversize domains (Student / Assessment / Discipline)",
+          "Cluster-ID stability via Hungarian assignment across rebuilds"]),
+        ("Week 2",  "May 11–15",
+         "Provider matrix coverage + agentic polish",
+         GREEN,
+         ["Add Azure OpenAI, OpenAI, OpenRouter to the matrix; capture per-provider regressions",
+          "Tool-call retries + structured failure surfaces in the agent loop",
+          "New agent tools: chart export, eval drilldown, conversation rename / archive",
+          "Streaming UX polish — token-level feedback under flaky network conditions"]),
+        ("Week 3",  "May 18–22",
          "Observability scaffolding",
-         ["OpenTelemetry spans on every pipeline + agent stage",
-          "Prometheus counters/histograms; Grafana dashboards in infra/grafana/",
-          "Wire structured logging context (request id, provider, dialect)"]),
-        ("Fri May 8",
-         "Eval suite expansion + nightly gate",
-         ["Expand gold-question suite from 50 to 100 questions",
-          "Wire CI nightly run; gate on >2pp execution-accuracy regression",
-          "Eval Dashboard polish: per-build deltas, regression alerts"]),
-        ("Mon May 11",
-         "Performance pass + caching",
-         ["APSP load + retrieval cache hot paths; verify p95 latency budget per spec §17",
-          "Per-user quota + rate limits; secret-leak scrubber on all error paths"]),
-        ("Tue May 12",
-         "Cross-platform smoke + provider-swap drill",
-         ["Clean Windows 11 + macOS dry runs from git clone",
-          "Provider-swap drill: Anthropic → Bedrock → Azure mid-session, no restart"]),
-        ("Wed May 13",
-         "Recorded demo — first cut",
-         ["Script: connect SQLite demo → ask question → chart + summary → switch to Postgres",
-          "Capture cluster manager drag-to-reassign + Settings UI editing",
-          "Edit + caption pass"]),
-        ("Thu May 14",
-         "Recorded demo polish + final eval gate",
-         ["Re-record any segments where the live system stuttered",
-          "Final eval suite run against v0.9 candidate; capture metrics for release notes"]),
-        ("Fri May 15",
-         "Release-day prep",
-         ["v0.9 release-candidate tag; smoke test on clean machines",
-          "Operator runbook + provider-swap guide finalized",
-          "Final read-through of release notes"]),
-        ("Sat May 16",
+         AMBER,
+         ["OpenTelemetry spans on every pipeline + agent stage; correlation IDs across services",
+          "Prometheus counters / histograms; Grafana dashboards in infra/grafana/",
+          "Structured logging context: request_id, provider, dialect, conversation_id",
+          "Stretch — slips to v0.10 without affecting the demo if the matrix runs long"]),
+        ("Week 4",  "May 25–29",
+         "Performance pass + eval suite expansion",
+         GREEN,
+         ["Cache hot paths: APSP load, retrieval, gold-store ANN; meet p50/p95 budget",
+          "Per-user quota + rate limits; secret-leak scrubber on every error path",
+          "Expand gold-query suite from 50 → 100 questions; wire nightly CI gate",
+          "Eval Dashboard polish — per-build deltas, regression alerts, drilldown"]),
+        ("Week 5",  "Jun 1–5",
+         "Cross-platform smoke + documentation",
+         GREEN,
+         ["Clean Windows 11 + macOS dry runs from git clone; capture install-time issues",
+          "Provider-swap drill: Anthropic → Bedrock → Azure mid-session without restart",
+          "Operator runbook, provider-swap guide, gold-curation guide — all finalized",
+          "Release notes draft against the v0.9 candidate"]),
+        ("Week 6",  "Jun 8–12",
+         "Recorded demo + release prep",
+         GREEN,
+         ["Demo script: connect demo SQLite → ask question → chart + summary → switch DB",
+          "Re-record any segments where the live system stutters; caption + edit pass",
+          "Final eval gate against v0.9 RC; capture metrics for release notes",
+          "v0.9 release-candidate tagged + smoke-tested on clean machines"]),
+        ("Fri Jun 13",  "Release day",
          "v0.9 RELEASE",
-         ["Tag v0.9 on main; push to GitHub Releases with recorded demo attached",
-          "Announce internally; client-facing summary distributed"]),
+         ACCENT,
+         ["Tag v0.9 on main; push to GitHub Releases with the recorded demo attached",
+          "Distribute client-facing release summary + recorded walkthrough",
+          "Internal announcement; v0.10 backlog opened (observability stretch + extras)"]),
     ]
 
     _panel(s, left=0.5, top=1.55, width=12.3, height=5.5, fill=PANEL)
     y = 1.65
-    for day, theme, tasks in days:
-        is_release = day == "Sat May 16"
-        day_color = GREEN if is_release else ACCENT
-        _add_text(s, day, left=0.7, top=y, width=1.7, height=0.26,
-                  size=11, bold=True, color=day_color)
-        _add_text(s, theme, left=2.5, top=y, width=10.3, height=0.26,
-                  size=11, bold=True, color=TEXT)
+    for week_label, dates, theme, color, tasks in phases:
+        is_release = week_label == "Fri Jun 13"
+        _add_text(s, week_label, left=0.7, top=y, width=1.2, height=0.26,
+                  size=11, bold=True, color=color)
+        _add_text(s, dates, left=1.95, top=y, width=1.6, height=0.26,
+                  size=10, color=MUTED)
+        _add_text(s, theme, left=3.6, top=y, width=9.2, height=0.26,
+                  size=11, bold=True, color=TEXT if not is_release else GREEN)
         for t in tasks:
             y += 0.19
-            _add_text(s, "•  " + t, left=2.5, top=y, width=10.3, height=0.22,
+            _add_text(s, "•  " + t, left=3.6, top=y, width=9.2, height=0.22,
                       size=9, color=MUTED)
-        y += 0.22
+        y += 0.16
 
-    _footer(s, "Plan · 11 working days + release",
+    _footer(s, "Plan · 6 working weeks + release day",
             "May 1 holiday + weekends excluded")
-    _notes(s, "Days 1-2 lead with the matrix because that work is the gate for everything else — "
-              "provider regressions cascade. Days 3-4 are the agentic + sub-clustering polish. "
-              "Day 5 is observability (the riskiest item — may compress). Days 6-9 are eval, "
-              "perf, smoke, and the recorded demo. Days 10-11 are the release-day choreography.")
+    _notes(s, "Why six weeks (not eleven days): the punch list is real engineering work, not "
+              "checklist items. Provider matrix touches 60 distinct combinations and historically "
+              "surfaces translator-layer bugs that take a half-day each. Leiden tuning needs "
+              "iteration. Observability work touches every span in the system. Recording a "
+              "client-facing demo we'd actually ship takes time and re-takes. Six weeks gives "
+              "honest buffer; if the team finishes early we ship early — but we won't book a "
+              "heroics-only plan.")
 
     # ── Slide 21: Risks ───────────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -860,7 +864,7 @@ def build():
          RED),
         ("Live demo connectivity",
          "Live demos can stutter on conference Wi-Fi or provider rate limits.",
-         "Pre-record the full flow Wed May 13 + polish Thu May 14; live Q&A only.",
+         "Pre-record the full flow in Week 6 + polish before release-day; live Q&A only.",
          GREEN),
     ]
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.4, fill=PANEL)
@@ -873,13 +877,14 @@ def build():
         y += 1.27
 
     _footer(s, "Risk register", "")
-    _notes(s, "We're not promising perfection by Saturday May 16. We are promising a tested "
+    _notes(s, "We're not promising perfection by Friday June 13. We are promising a tested "
               "platform with a recorded demo, the multi-provider matrix passing, and stretch "
-              "items called out before they slip silently.")
+              "items called out before they slip silently. The 6-week timeline is honest "
+              "engineering scope, not heroics.")
 
     # ── Slide 22: What you'll see ─────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "What you'll see at the May 16 demo", left=0.8, top=1.4, width=11.7, height=0.6,
+    _add_text(s, "What you'll see at the v0.9 demo (June 13)", left=0.8, top=1.4, width=11.7, height=0.6,
               size=24, bold=True, color=ACCENT)
 
     _panel(s, left=0.5, top=2.1, width=12.3, height=4.6, fill=PANEL)
@@ -894,7 +899,7 @@ def build():
         "Open the Eval Dashboard to see how accuracy is trending across builds",
     ], left=0.7, top=2.25, width=11.9, height=4.4, size=13, color=TEXT)
 
-    _add_text(s, "Demo machine: clean Windows install · no prior setup · v0.9 tagged Sat May 16",
+    _add_text(s, "Demo machine: clean Windows install · no prior setup · v0.9 tagged Fri June 13",
               left=0.5, top=6.85, width=12.3, height=0.4, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
     _notes(s, "End on the demo. The 8 specific things on this slide are what you'll watch. "
