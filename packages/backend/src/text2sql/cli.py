@@ -123,6 +123,30 @@ def build_fk_graph(
         edges.extend(parse_fks(art.foreign_keys_sql_path))
     typer.echo(f"Parsed {len(edges)} FK edges")
 
+    # Extension: reflect FKs from the live target DB and merge in any
+    # constraints that aren't in 0030-ForeignKeys.sql (covers tables
+    # that aren't part of the Ed-Fi standard model).
+    try:
+        from text2sql.providers import build_sql_engine
+        from text2sql.table_catalog.catalog_builder import reflect_unknown_tables
+        engine = build_sql_engine(cfg.target_db_provider())
+        # Tables already covered by ApiModel-driven FKs.
+        known_table_fqns: set[str] = set()
+        for e in edges:
+            known_table_fqns.add(e.src_fqn)
+            known_table_fqns.add(e.dst_fqn)
+        _, fk_records = reflect_unknown_tables(engine, known_fqns=known_table_fqns)
+        added = 0
+        for fk in fk_records:
+            edge = parse_fks.__globals__["FKEdge"].from_reflected(fk)
+            if edge:
+                edges.append(edge)
+                added += 1
+        if added:
+            typer.echo(f"Reflected {added} additional FK edges from live DB")
+    except Exception as e:
+        typer.echo(f"(skipping live-DB FK reflection: {e})", err=True)
+
     classifications = []
     cl_path = REPO_ROOT / classification
     if cl_path.exists():

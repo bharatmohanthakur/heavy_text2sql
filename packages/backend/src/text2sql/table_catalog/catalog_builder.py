@@ -17,7 +17,9 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+
+import sqlalchemy as sa
 
 from text2sql.classification.metadata import CatalogIndex, TableMetadata
 from text2sql.classification.table_mapping import TableClassification
@@ -248,6 +250,155 @@ def _columns_from_db(
     ]
 
 
+def _reflect_pk(engine: SqlEngine, schema: str, table: str) -> list[str]:
+    """Best-effort PK reflection across dialects via SA Inspector. Returns
+    [] if reflection fails (engine doesn't expose its underlying SA engine
+    or the inspector can't introspect this table)."""
+    try:
+        sa_engine = getattr(engine, "_engine", None)
+        if sa_engine is None:
+            return []
+        insp = sa.inspect(sa_engine)
+        # SQLite uses schema=None; PG/MSSQL use the named schema.
+        s = None if engine.dialect == "sqlite" else schema
+        pk = insp.get_pk_constraint(table, schema=s)
+        return list(pk.get("constrained_columns") or [])
+    except Exception as e:
+        log.debug("_reflect_pk failed for %s.%s: %s", schema, table, e)
+        return []
+
+
+def _reflect_foreign_keys_for_table(
+    engine: SqlEngine, schema: str, table: str
+) -> list[dict[str, Any]]:
+    """Returns a list of FK records: {referred_schema, referred_table,
+    constrained_columns, referred_columns}. Empty list on any reflection
+    failure — caller treats that as "no FKs we can see"."""
+    try:
+        sa_engine = getattr(engine, "_engine", None)
+        if sa_engine is None:
+            return []
+        insp = sa.inspect(sa_engine)
+        s = None if engine.dialect == "sqlite" else schema
+        fks = insp.get_foreign_keys(table, schema=s) or []
+        out: list[dict[str, Any]] = []
+        for fk in fks:
+            ref_table = fk.get("referred_table")
+            if not ref_table:
+                continue
+            out.append({
+                "constrained_columns": list(fk.get("constrained_columns") or []),
+                "referred_schema": fk.get("referred_schema") or schema,
+                "referred_table": ref_table,
+                "referred_columns": list(fk.get("referred_columns") or []),
+                "name": fk.get("name") or "",
+            })
+        return out
+    except Exception:
+        return []
+
+
+def reflect_unknown_tables(
+    sql_engine: SqlEngine,
+    known_fqns: set[str],
+    *,
+    default_schema: str = "edfi",
+    sample_row_count: int = DEFAULT_SAMPLE_ROW_COUNT,
+) -> tuple[list[TableEntry], list[dict[str, Any]]]:
+    """Walk every table the live engine exposes and emit a best-effort
+    TableEntry for each one not already in `known_fqns` (the set of fqns
+    the ApiModel-driven build produced).
+
+    Returns (entries, fk_records). Caller appends entries to the catalog
+    and feeds fk_records to the graph builder so Steiner paths through
+    the unknown tables work.
+
+    Domain tag: every reflection-only entry is tagged with the synthetic
+    domain "Other". Operators can re-classify via overrides.yaml or the
+    Settings UI.
+    """
+    out_entries: list[TableEntry] = []
+    out_fks: list[dict[str, Any]] = []
+
+    try:
+        live = sql_engine.list_tables()
+    except Exception as e:
+        log.warning("list_tables() failed during reflection: %s", e)
+        return out_entries, out_fks
+
+    for schema, table in live:
+        # SQLite reports schema="main"; treat as the default Ed-Fi schema
+        # for fqn purposes so callers can compare against ApiModel fqns.
+        eff_schema = default_schema if schema in ("main", "") else schema
+        fqn = f"{eff_schema}.{table}"
+        if fqn in known_fqns:
+            continue
+
+        try:
+            pk = _reflect_pk(sql_engine, eff_schema, table)
+            columns = _columns_from_db(sql_engine, eff_schema, table, pk)
+        except Exception as e:
+            log.debug("column reflection failed for %s: %s", fqn, e)
+            continue
+
+        sample_rows: list[dict] = []
+        row_count: int | None = None
+        try:
+            row_count = _row_count(sql_engine, eff_schema, table)
+            if row_count and row_count > 0:
+                sample_rows = _sample_rows(sql_engine, eff_schema, table, sample_row_count)
+        except Exception:
+            pass
+
+        # FKs from reflection — captured here so the graph builder can
+        # consume them alongside sqlglot-parsed edges from the SQL DDL.
+        fks = _reflect_foreign_keys_for_table(sql_engine, eff_schema, table)
+        parents = sorted({
+            f"{(fk['referred_schema'] or default_schema)}.{fk['referred_table']}"
+            for fk in fks
+        })
+        for fk in fks:
+            out_fks.append({
+                "parent_schema": fk["referred_schema"] or default_schema,
+                "parent_table": fk["referred_table"],
+                "parent_columns": fk["referred_columns"],
+                "child_schema": eff_schema,
+                "child_table": table,
+                "child_columns": fk["constrained_columns"],
+                "name": fk["name"],
+            })
+
+        out_entries.append(TableEntry(
+            schema=eff_schema,
+            table=table,
+            description="",
+            description_source="",
+            domains=["Other"],
+            is_descriptor=False,
+            is_association=False,
+            is_extension=True,         # everything not in ApiModel is an "extension" from our pov
+            primary_key=pk,
+            parent_neighbors=parents,
+            child_neighbors=[],         # filled below in a second pass
+            aggregate_root=None,
+            columns=columns,
+            sample_rows=sample_rows,
+            row_count=row_count,
+        ))
+
+    # Second pass: now that we have all reflected entries, populate
+    # child_neighbors symmetrically by walking the FK records.
+    by_fqn = {e.fqn: e for e in out_entries}
+    for fk in out_fks:
+        parent_fqn = f"{fk['parent_schema']}.{fk['parent_table']}"
+        child_fqn = f"{fk['child_schema']}.{fk['child_table']}"
+        parent = by_fqn.get(parent_fqn)
+        if parent and child_fqn not in parent.child_neighbors:
+            parent.child_neighbors.append(child_fqn)
+
+    return out_entries, out_fks
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -275,8 +426,17 @@ def build_table_catalog(
     low_card_threshold: int = DEFAULT_LOW_CARD_THRESHOLD,
     only_fqns: set[str] | None = None,
     provider_name: str = "",
+    include_unknown_tables: bool = True,
 ) -> TableCatalog:
-    """Build the catalog. One record per table."""
+    """Build the catalog. One record per table.
+
+    When `include_unknown_tables=True` (default) and a `sql_engine` is
+    supplied, any live table that ApiModel.json doesn't cover is
+    reflected and appended with `domains=["Other"]` and an LLM-filled
+    description. This keeps the catalog faithful to the database the
+    user is actually querying — e.g., a 1084-table DB with 36 custom
+    tables that aren't in the Ed-Fi standard model.
+    """
     cls_by_fqn = {c.fqn: c for c in classifications}
     raw_entities = _entity_lookup(manifest.artifacts)
     by_fqn_meta = catalog_index.by_fqn
@@ -421,6 +581,63 @@ def build_table_catalog(
             if stock:
                 col.description = stock
                 col.description_source = "stock"
+
+    # Reflect any live tables NOT covered by ApiModel — extensions,
+    # vendor add-ons, district custom tables. Skipped when no engine is
+    # available (offline catalog build).
+    reflected_fk_records: list[dict[str, Any]] = []
+    if include_unknown_tables and sql_engine is not None:
+        known_fqns = {e.fqn for e in entries}
+        try:
+            extras, reflected_fk_records = reflect_unknown_tables(
+                sql_engine, known_fqns, sample_row_count=sample_row_count,
+            )
+        except Exception as e:
+            log.warning("unknown-table reflection failed: %s", e)
+            extras = []
+        if extras:
+            log.info("reflected %d unknown tables into catalog", len(extras))
+            entries.extend(extras)
+            # Queue LLM gap-fill for the new entries' descriptions and
+            # any column descriptions (always missing from reflection).
+            if description_generator is not None:
+                more_samples: list[TableSampleData] = []
+                for extra in extras:
+                    more_samples.append(TableSampleData(
+                        schema=extra.schema, table=extra.table,
+                        apimodel_table_description="",
+                        columns=[
+                            {
+                                "name": col.name,
+                                "data_type": col.data_type,
+                                "nullable": col.nullable,
+                                "samples": col.sample_values,
+                                "distinct_count": col.distinct_count,
+                            }
+                            for col in extra.columns
+                        ],
+                        sample_rows=extra.sample_rows,
+                        row_count=extra.row_count,
+                        request_table_desc=True,
+                        columns_to_describe=[c.name for c in extra.columns],
+                    ))
+                if more_samples:
+                    extra_results = description_generator.generate_many(more_samples, max_workers=8)
+                    by_fqn = {e.fqn: e for e in entries}
+                    for fqn, gd in extra_results.items():
+                        entry = by_fqn.get(fqn)
+                        if not entry:
+                            continue
+                        if gd.table_description and not entry.description:
+                            entry.description = gd.table_description
+                            entry.description_source = gd.source
+                        for col in entry.columns:
+                            if col.description:
+                                continue
+                            new_desc = gd.column_descriptions.get(col.name)
+                            if new_desc:
+                                col.description = new_desc
+                                col.description_source = gd.source
 
     # Pull every descriptor code with its namespace once. These are the
     # human-readable values ("Hispanic", "Pre-K", etc.) that entity resolution

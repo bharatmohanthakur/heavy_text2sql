@@ -72,6 +72,27 @@ class FKEdge:
     constraint_name: str
     column_pairs: tuple[tuple[str, str], ...]   # ordered (src_col, dst_col)
 
+    @classmethod
+    def from_reflected(cls, fk: dict) -> "FKEdge | None":
+        """Build an FKEdge from a SQLAlchemy-Inspector-shaped dict (the
+        record shape `reflect_unknown_tables` emits). Returns None when
+        the dict is missing required pieces."""
+        try:
+            child_cols = list(fk.get("child_columns") or [])
+            parent_cols = list(fk.get("parent_columns") or [])
+            if not child_cols or not parent_cols or len(child_cols) != len(parent_cols):
+                return None
+            return cls(
+                src_schema=fk["child_schema"],
+                src_table=fk["child_table"],
+                dst_schema=fk["parent_schema"],
+                dst_table=fk["parent_table"],
+                constraint_name=fk.get("name") or f"reflected_{fk['child_table']}_{fk['parent_table']}",
+                column_pairs=tuple(zip(child_cols, parent_cols)),
+            )
+        except Exception:
+            return None
+
     @property
     def src_fqn(self) -> str:
         return f"{self.src_schema}.{self.src_table}"
