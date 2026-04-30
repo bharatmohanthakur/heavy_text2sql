@@ -331,13 +331,37 @@ def serve(
     """Component 11: launch the FastAPI server."""
     import uvicorn
     from text2sql.api import build_app
+    from text2sql.config import resolve_artifact_path
     from text2sql.gold import GoldStore
     from text2sql.providers import build_embedding
     from text2sql.table_catalog import load_table_catalog
 
     cfg = load_config()
     pipeline = _build_pipeline()
-    catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
+
+    # Provider-aware catalog loader. /tables, /tables/{fqn}, /domains,
+    # /health all call this per-request so a Settings → primary switch
+    # via the runtime overlay is reflected without a server restart.
+    # Cached by (path, mtime) so the JSON parse cost stays one-shot per
+    # rebuild, not per request.
+    _cat_cache: dict[tuple[str, float], object] = {}
+
+    def _load_active_catalog():
+        live_cfg = load_config()
+        cat_path = resolve_artifact_path(live_cfg, "table_catalog.json")
+        try:
+            mtime = cat_path.stat().st_mtime
+        except FileNotFoundError:
+            return load_table_catalog(cat_path)  # surface the real error
+        key = (str(cat_path), mtime)
+        cached = _cat_cache.get(key)
+        if cached is None:
+            _cat_cache.clear()
+            cached = load_table_catalog(cat_path)
+            _cat_cache[key] = cached
+        return cached  # type: ignore[return-value]
+
+    catalog = _load_active_catalog()
     gold_store = None
     try:
         embedder = build_embedding(cfg.embedding_provider())
@@ -354,6 +378,7 @@ def serve(
         gold_store=gold_store,
         agent_runner=agent_runner,
         conv_store=conv_store,
+        catalog_loader=_load_active_catalog,
     )
     uvicorn.run(fastapi_app, host=host, port=port, reload=reload, log_level="info")
 

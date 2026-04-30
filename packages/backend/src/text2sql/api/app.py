@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -115,6 +115,7 @@ def build_app(
     gold_store: GoldStore | None,
     agent_runner: AgentRunner | None = None,
     conv_store: ConversationStore | None = None,
+    catalog_loader: Callable[[], TableCatalog] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Ed-Fi Text-to-SQL", version="0.1.0")
     app.add_middleware(
@@ -128,14 +129,31 @@ def build_app(
     from text2sql.api.admin import router as _admin_router
     app.include_router(_admin_router)
 
+    # Catalog resolver: when `catalog_loader` is supplied (cli serve, prod
+    # path), each catalog-touching endpoint re-resolves per request so a
+    # mid-flight `target_db.primary` switch via Settings → overlay is
+    # picked up without a server restart. Tests that don't care about
+    # provider switching just pass the static `catalog` and skip loader.
+    def _catalog() -> TableCatalog:
+        if catalog_loader is None:
+            return catalog
+        try:
+            return catalog_loader()
+        except Exception as e:
+            log.warning("catalog_loader failed; falling back to startup catalog: %s", e)
+            return catalog
+
     # ── Health ──────────────────────────────────────────────────────────────
     @app.get("/health")
     def health() -> dict[str, Any]:
+        cat = _catalog()
         return {
             "status": "ok",
-            "tables": len(catalog.entries),
-            "domains": len(catalog.domain_counts()),
+            "tables": len(cat.entries),
+            "domains": len(cat.domain_counts()),
             "gold_store": gold_store is not None,
+            "provider_name": cat.provider_name,
+            "target_dialect": cat.target_dialect,
         }
 
     # ── Query (sync) ────────────────────────────────────────────────────────
@@ -186,7 +204,7 @@ def build_app(
         descriptors: bool = Query(True, description="Include descriptor tables"),
         limit: int = Query(200, ge=1, le=2000),
     ) -> dict[str, Any]:
-        entries = catalog.entries
+        entries = _catalog().entries
         if domain:
             entries = [e for e in entries if e.has_domain(domain)]
         if not descriptors:
@@ -210,7 +228,7 @@ def build_app(
 
     @app.get("/tables/{fqn}")
     def get_table(fqn: str) -> dict[str, Any]:
-        entry = catalog.by_fqn().get(fqn)
+        entry = _catalog().by_fqn().get(fqn)
         if not entry:
             raise HTTPException(404, detail=f"table not found: {fqn}")
         return {
@@ -234,7 +252,7 @@ def build_app(
 
     @app.get("/domains")
     def list_domains() -> dict[str, Any]:
-        counts = catalog.domain_counts()
+        counts = _catalog().domain_counts()
         return {
             "total": len(counts),
             "domains": [
