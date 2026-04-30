@@ -405,7 +405,15 @@ def serve(
     except Exception as e:
         typer.echo(f"(no gold store available: {e})", err=True)
 
-    agent_runner, conv_store = _build_agent_runner()
+    try:
+        agent_runner, conv_store = _build_agent_runner()
+    except Exception as e:
+        # _build_agent_runner reads manifest.json + table_catalog.json
+        # + table_classification.json + builds vector store + LLM. On a
+        # fresh repo any of these can fail; we still want the API up so
+        # /admin/* (Settings / Rebuild) works.
+        typer.echo(f"(agent unavailable: {e})", err=True)
+        agent_runner, conv_store = None, None
     fastapi_app = build_app(
         pipeline=pipeline,
         catalog=catalog,
