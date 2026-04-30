@@ -161,12 +161,17 @@ def test_test_metadata_db_succeeds_for_sqlite_overlay(tmp_path, client):
 
 
 def test_test_metadata_db_reports_sqlite_missing_path_clearly(client):
-    """Misconfigured overlay (sqlite kind but no path) should not crash —
-    the endpoint must respond 200 with ok=false + a useful error string."""
+    """Misconfigured overlay (sqlite kind, path explicitly cleared) must
+    not crash — the endpoint responds 200 with ok=false + a useful error.
+
+    Note: default.yaml now seeds a `path` default for the sqlite branch,
+    so the only way to hit this failure mode is to override it to empty
+    (which is what an operator would see if they typo'd a path in the UI
+    and left the field blank)."""
     import text2sql.api.admin as admin_mod
     overlay_path = Path(admin_mod.RUNTIME_OVERRIDES_PATH)
     overlay_path.write_text(json.dumps({
-        "metadata_db": {"kind": "sqlite"},  # no path
+        "metadata_db": {"kind": "sqlite", "path": ""},  # explicitly empty
     }, indent=2))
 
     r = client.post("/admin/test_metadata_db")

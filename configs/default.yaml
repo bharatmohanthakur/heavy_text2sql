@@ -207,14 +207,31 @@ target_db:
       trust_server_certificate: true
       driver: "ODBC Driver 18 for SQL Server"
       encrypt: false
+    # Zero-infra demo target: a single SQLite file holding a populated
+    # subset. No Docker, no Postgres, no MSSQL. Pair with the matching
+    # sqlite metadata_db block below to run the whole platform out of
+    # one folder of files. Path is repo-relative; ":memory:" works for
+    # ephemeral tests but loses state between processes.
+    sqlite-demo:
+      kind: sqlite
+      path: data/edfi/sample_demo.sqlite
+      read_only: true
 
 metadata_db:
-  kind: postgresql
+  # Default metadata DB is Postgres for prod-like deployments. The
+  # zero-infra alternative is the commented sqlite block below — flip
+  # by setting METADATA_DB_KIND=sqlite in .env, or via the Settings UI
+  # which writes data/artifacts/runtime_overrides.json.
+  kind: ${METADATA_DB_KIND:-postgresql}
   host: ${METADATA_DB_HOST:-127.0.0.1}
   port: ${METADATA_DB_PORT:-5432}
   database: ${METADATA_DB_NAME:-text2sql_meta}
   user: ${METADATA_DB_USER:-edfi}
   password_env: METADATA_DB_PASSWORD
+  # SQLite alternative — overrides the network fields above when
+  # kind=sqlite (extra="allow" on MetadataDb keeps Postgres fields
+  # tolerated as ignored noise). Resolved relative to REPO_ROOT.
+  path: ${METADATA_DB_PATH:-data/artifacts/metadata.sqlite}
 
 logging:
   level: ${LOG_LEVEL:-INFO}
