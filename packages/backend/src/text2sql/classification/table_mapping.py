@@ -242,7 +242,7 @@ def _apply_overrides(
 ) -> list[TableClassification]:
     if not overrides_path.exists():
         return classifications
-    raw = yaml.safe_load(overrides_path.read_text()) or {}
+    raw = yaml.safe_load(overrides_path.read_text(encoding="utf-8")) or {}
     by_fqn = {f"{o.get('schema','edfi')}.{o['table']}": o for o in raw.get("overrides", [])}
     out: list[TableClassification] = []
     for c in classifications:
@@ -343,7 +343,7 @@ def write_table_mapping(
 
 
 def read_table_mapping(path: Path) -> TableClassificationOutput:
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     classifications = [TableClassification(**c) for c in raw["classifications"]]
     return TableClassificationOutput(
         data_standard_version=raw["data_standard_version"],

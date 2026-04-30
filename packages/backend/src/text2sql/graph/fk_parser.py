@@ -93,7 +93,7 @@ def parse_fks(sql_text_or_path: str | Path) -> list[FKEdge]:
     matching columns (e.g. ON DELETE-only DDL) are silently dropped.
     """
     if isinstance(sql_text_or_path, Path):
-        text = sql_text_or_path.read_text()
+        text = sql_text_or_path.read_text(encoding="utf-8")
     else:
         text = sql_text_or_path
 

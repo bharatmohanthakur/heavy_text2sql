@@ -254,7 +254,7 @@ def _columns_from_db(
 def _entity_lookup(manifest_artifacts: list) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for art in manifest_artifacts:
-        data = json.loads(Path(art.api_model_path).read_text())
+        data = json.loads(Path(art.api_model_path).read_text(encoding="utf-8"))
         for ent in data.get("entityDefinitions", []):
             fqn = f"{ent.get('schema', 'edfi')}.{ent['name']}"
             out[fqn] = ent
@@ -510,7 +510,7 @@ def save_table_catalog(catalog: TableCatalog, path: Path) -> None:
         "entries": [asdict(e) for e in catalog.entries],
         "descriptor_codes": [asdict(d) for d in catalog.descriptor_codes],
     }
-    path.write_text(json.dumps(payload, indent=2, default=str, sort_keys=True))
+    path.write_text(json.dumps(payload, indent=2, default=str, sort_keys=True), encoding="utf-8")
 
 
 def load_table_catalog(
@@ -521,7 +521,7 @@ def load_table_catalog(
     """Load a catalog. If `expected_provider` is given, raises a clear
     error when the manifest's provider_name doesn't match — prevents
     silently using one provider's catalog against another's live DB."""
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     provider_name = raw.get("provider_name", "")
     if expected_provider and provider_name and provider_name != expected_provider:
         raise RuntimeError(

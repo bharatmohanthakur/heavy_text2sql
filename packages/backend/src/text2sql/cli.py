@@ -61,7 +61,7 @@ def map_tables_cmd(
     if not manifest_path.exists():
         typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
         sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text())
+    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
     catalog = load_domain_catalog(manifest)
     index = CatalogIndex.from_manifest(manifest)
 
@@ -104,7 +104,7 @@ def build_fk_graph(
     if not manifest_path.exists():
         typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
         sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text())
+    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
 
     edges = []
     for art in manifest.artifacts:
@@ -149,7 +149,7 @@ def build_table_catalog_cmd(
     if not manifest_path.exists():
         typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
         sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text())
+    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
 
     cl_path = REPO_ROOT / classification
     if not cl_path.exists():
@@ -337,7 +337,14 @@ def serve(
     from text2sql.table_catalog import load_table_catalog
 
     cfg = load_config()
-    pipeline = _build_pipeline()
+    try:
+        pipeline = _build_pipeline()
+    except Exception as e:
+        # Pipeline construction reads manifest.json + table_catalog.json
+        # + table_classification.json. On a fresh repo none of those
+        # exist; we still want the API up so Settings → Rebuild is usable.
+        typer.echo(f"(pipeline unavailable: {e})", err=True)
+        pipeline = None
 
     # Provider-aware catalog loader. /tables, /tables/{fqn}, /domains,
     # /health all call this per-request so a Settings → primary switch
@@ -347,21 +354,36 @@ def serve(
     _cat_cache: dict[tuple[str, float], object] = {}
 
     def _load_active_catalog():
+        """Re-resolve the catalog for whatever target_db.primary is now.
+        Returns None when no artifact has been built yet — the API boots
+        in that state so the operator can use Settings → Rebuild from a
+        fresh repo without the chicken-and-egg of "catalog needed to
+        serve UI; UI needed to build catalog"."""
         live_cfg = load_config()
         cat_path = resolve_artifact_path(live_cfg, "table_catalog.json")
         try:
             mtime = cat_path.stat().st_mtime
         except FileNotFoundError:
-            return load_table_catalog(cat_path)  # surface the real error
+            return None
         key = (str(cat_path), mtime)
         cached = _cat_cache.get(key)
         if cached is None:
             _cat_cache.clear()
-            cached = load_table_catalog(cat_path)
+            try:
+                cached = load_table_catalog(cat_path)
+            except Exception as e:
+                typer.echo(f"(catalog at {cat_path} unreadable: {e})", err=True)
+                return None
             _cat_cache[key] = cached
         return cached  # type: ignore[return-value]
 
     catalog = _load_active_catalog()
+    if catalog is None:
+        typer.echo(
+            "No catalog yet — open the Settings page and run Rebuild "
+            "(ingest → classify → graph → catalog → index → gold-seed).",
+            err=True,
+        )
     gold_store = None
     try:
         embedder = build_embedding(cfg.embedding_provider())
@@ -486,7 +508,7 @@ def _build_pipeline():
 
     cfg = load_config()
     ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text())
+    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text(encoding="utf-8"))
 
     catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
     edges = []
@@ -571,7 +593,7 @@ def _build_agent_runner():
 
     cfg = load_config()
     ic = IngestionConfig.from_app_config(cfg.ed_fi, REPO_ROOT)
-    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text())
+    manifest = IngestionManifest.from_json((ic.cache_dir / "manifest.json").read_text(encoding="utf-8"))
 
     catalog = load_table_catalog(REPO_ROOT / "data/artifacts/table_catalog.json")
     edges = []
@@ -687,7 +709,7 @@ def gold_seed(
         except Exception as e:
             typer.echo(f"(no target DB — skipping exec checks): {e}")
 
-    pairs = yaml.safe_load((REPO_ROOT / yaml_path).read_text())["queries"]
+    pairs = yaml.safe_load((REPO_ROOT / yaml_path).read_text(encoding="utf-8"))["queries"]
     typer.echo(f"Seeding {len(pairs)} pairs from {yaml_path}…")
     n_created = 0
     n_skipped = 0
@@ -827,7 +849,7 @@ def classify_query(query: str) -> None:
     if not manifest_path.exists():
         typer.echo("No ingest manifest. Run `text2sql ingest` first.", err=True)
         sys.exit(1)
-    manifest = IngestionManifest.from_json(manifest_path.read_text())
+    manifest = IngestionManifest.from_json(manifest_path.read_text(encoding="utf-8"))
     catalog = load_domain_catalog(manifest)
 
     llm = build_llm(cfg.llm_for_task("classifier_fallback"))

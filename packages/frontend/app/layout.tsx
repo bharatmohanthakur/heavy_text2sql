@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { OnboardingBanner } from "@/components/OnboardingBanner";
 
 export const metadata: Metadata = {
   title: "Ed-Fi Text-to-SQL",
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="flex-1 max-w-6xl mx-auto px-6 py-6 w-full">
+          <OnboardingBanner />
           {children}
         </main>
       </body>

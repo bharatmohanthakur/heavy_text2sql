@@ -125,7 +125,7 @@ class EvalReport:
                 )
                 lines.append(f"- {c.nl_question!r:80s} — {why}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines))
+        path.write_text("\n".join(lines), encoding="utf-8")
 
     def regression(self, prev: "EvalReport | None") -> dict[str, float]:
         """Delta vs a previous report; positive = improvement."""

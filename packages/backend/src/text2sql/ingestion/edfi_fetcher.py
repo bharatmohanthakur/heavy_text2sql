@@ -133,7 +133,7 @@ def _fetch(client: httpx.Client, url: str, dest: Path, *, force: bool) -> str:
 
 
 def _summarize(api_model_path: Path) -> dict[str, int]:
-    data = json.loads(api_model_path.read_text())
+    data = json.loads(api_model_path.read_text(encoding="utf-8"))
     entities = data.get("entityDefinitions", [])
     domains: set[str] = set()
     descriptors = 0
@@ -202,7 +202,7 @@ def fetch_all(cfg: IngestionConfig, *, force: bool = False) -> IngestionManifest
         artifacts=artifacts,
         counts=counts,
     )
-    (cfg.cache_dir / "manifest.json").write_text(manifest.to_json())
+    (cfg.cache_dir / "manifest.json").write_text(manifest.to_json(), encoding="utf-8")
     return manifest
 
 

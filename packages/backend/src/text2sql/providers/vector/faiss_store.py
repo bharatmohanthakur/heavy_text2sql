@@ -77,7 +77,7 @@ class _Collection:
         meta = self._meta_path()
         if not meta.exists():
             return
-        data = json.loads(meta.read_text())
+        data = json.loads(meta.read_text(encoding="utf-8"))
         self._ids = data["ids"]
         self._payloads = data["payloads"]
         self._dim = data.get("dim")

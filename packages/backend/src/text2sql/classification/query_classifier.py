@@ -97,7 +97,7 @@ class _Cache:
         self._data: dict[str, dict[str, Any]] = {}
         if path and path.exists():
             try:
-                self._data = json.loads(path.read_text())
+                self._data = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 self._data = {}
 
@@ -115,7 +115,7 @@ class _Cache:
         if not self._path:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._data, sort_keys=True))
+        self._path.write_text(json.dumps(self._data, sort_keys=True), encoding="utf-8")
 
 
 class QueryDomainClassifier:

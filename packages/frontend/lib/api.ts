@@ -13,6 +13,11 @@ export type HealthResponse = {
   // table fetches on a switch. Empty strings mean a legacy flat catalog.
   provider_name: string;
   target_dialect: string;
+  // P4: onboarding signals — false on a fresh repo before anyone has
+  // run the build pipeline. The UI shows a "Run Rebuild" banner instead
+  // of crashing or serving 503s without context.
+  catalog_loaded: boolean;
+  pipeline_ready: boolean;
 };
 
 export type DomainScore = { name: string; table_count: number };

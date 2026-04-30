@@ -72,7 +72,7 @@ class _StrictCache:
                 return
             try:
                 if self._path.exists():
-                    self._data = json.loads(self._path.read_text())
+                    self._data = json.loads(self._path.read_text(encoding="utf-8"))
             except Exception as e:
                 log.debug("strict-cache load failed (%s); starting empty", e)
                 self._data = {}
@@ -95,7 +95,7 @@ class _StrictCache:
             self._data[model] = {"strict": strict, "ts": time.time()}
             try:
                 self._path.parent.mkdir(parents=True, exist_ok=True)
-                self._path.write_text(json.dumps(self._data, indent=2))
+                self._path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
             except Exception as e:
                 log.debug("strict-cache write failed: %s", e)
 

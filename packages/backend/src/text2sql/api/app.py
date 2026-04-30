@@ -110,12 +110,12 @@ def _serialize_pipeline(result: PipelineResult) -> dict[str, Any]:
 
 def build_app(
     *,
-    pipeline: Text2SqlPipeline,
-    catalog: TableCatalog,
+    pipeline: Text2SqlPipeline | None,
+    catalog: TableCatalog | None,
     gold_store: GoldStore | None,
     agent_runner: AgentRunner | None = None,
     conv_store: ConversationStore | None = None,
-    catalog_loader: Callable[[], TableCatalog] | None = None,
+    catalog_loader: Callable[[], TableCatalog | None] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Ed-Fi Text-to-SQL", version="0.1.0")
     app.add_middleware(
@@ -134,7 +134,7 @@ def build_app(
     # mid-flight `target_db.primary` switch via Settings → overlay is
     # picked up without a server restart. Tests that don't care about
     # provider switching just pass the static `catalog` and skip loader.
-    def _catalog() -> TableCatalog:
+    def _catalog() -> TableCatalog | None:
         if catalog_loader is None:
             return catalog
         try:
@@ -143,26 +143,50 @@ def build_app(
             log.warning("catalog_loader failed; falling back to startup catalog: %s", e)
             return catalog
 
+    def _require_catalog() -> TableCatalog:
+        cat = _catalog()
+        if cat is None:
+            raise HTTPException(
+                503,
+                detail="No catalog yet. Open Settings → Rebuild and run "
+                       "ingest → classify → graph → catalog → index → gold-seed.",
+            )
+        return cat
+
+    def _require_pipeline() -> Text2SqlPipeline:
+        if pipeline is None:
+            raise HTTPException(
+                503,
+                detail="Pipeline unavailable — artifacts haven't been built yet. "
+                       "Open Settings → Rebuild to bootstrap, then restart the server.",
+            )
+        return pipeline
+
     # ── Health ──────────────────────────────────────────────────────────────
     @app.get("/health")
     def health() -> dict[str, Any]:
         cat = _catalog()
         return {
             "status": "ok",
-            "tables": len(cat.entries),
-            "domains": len(cat.domain_counts()),
+            "tables": len(cat.entries) if cat else 0,
+            "domains": len(cat.domain_counts()) if cat else 0,
             "gold_store": gold_store is not None,
-            "provider_name": cat.provider_name,
-            "target_dialect": cat.target_dialect,
+            "provider_name": cat.provider_name if cat else "",
+            "target_dialect": cat.target_dialect if cat else "",
+            # Onboarding signals — frontend uses these to render a banner
+            # when the operator hasn't bootstrapped artifacts yet.
+            "catalog_loaded": cat is not None,
+            "pipeline_ready": pipeline is not None,
         }
 
     # ── Query (sync) ────────────────────────────────────────────────────────
     @app.post("/query")
     async def query(req: QueryRequest) -> dict[str, Any]:
+        pl = _require_pipeline()
         # The pipeline is sync; off-load to a worker so the event loop isn't
         # blocked while the LLM is thinking.
         result = await asyncio.to_thread(
-            pipeline.answer, req.question, execute=req.execute, max_rows=req.max_rows,
+            pl.answer, req.question, execute=req.execute, max_rows=req.max_rows,
         )
         return _serialize_pipeline(result)
 
@@ -175,6 +199,13 @@ def build_app(
             question = payload.get("question", "")
             if not question:
                 await ws.send_json({"event": "error", "error": "empty question"})
+                await ws.close()
+                return
+            if pipeline is None:
+                await ws.send_json({
+                    "event": "error",
+                    "error": "Pipeline unavailable — run Settings → Rebuild first.",
+                })
                 await ws.close()
                 return
             await ws.send_json({"event": "started", "question": question})
@@ -204,7 +235,7 @@ def build_app(
         descriptors: bool = Query(True, description="Include descriptor tables"),
         limit: int = Query(200, ge=1, le=2000),
     ) -> dict[str, Any]:
-        entries = _catalog().entries
+        entries = _require_catalog().entries
         if domain:
             entries = [e for e in entries if e.has_domain(domain)]
         if not descriptors:
@@ -228,7 +259,7 @@ def build_app(
 
     @app.get("/tables/{fqn}")
     def get_table(fqn: str) -> dict[str, Any]:
-        entry = _catalog().by_fqn().get(fqn)
+        entry = _require_catalog().by_fqn().get(fqn)
         if not entry:
             raise HTTPException(404, detail=f"table not found: {fqn}")
         return {
@@ -252,7 +283,7 @@ def build_app(
 
     @app.get("/domains")
     def list_domains() -> dict[str, Any]:
-        counts = _catalog().domain_counts()
+        counts = _require_catalog().domain_counts()
         return {
             "total": len(counts),
             "domains": [

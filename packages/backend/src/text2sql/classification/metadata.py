@@ -64,7 +64,7 @@ def extract_tables(manifest: IngestionManifest) -> Iterable[TableMetadata]:
     aggregate_root_for: dict[str, str] = {}              # fqn -> root fqn
 
     for art in manifest.artifacts:
-        data = json.loads(art.api_model_path.read_text())
+        data = json.loads(art.api_model_path.read_text(encoding="utf-8"))
         is_extension = art.source.startswith("ext:")
         for ent in data.get("entityDefinitions", []):
             ent["_is_extension"] = is_extension

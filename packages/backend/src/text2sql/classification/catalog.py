@@ -101,7 +101,7 @@ def load_domain_catalog(
     descriptions = {**_DS610_DOMAIN_DESCRIPTIONS, **_TPDM_DOMAINS}
 
     for art in manifest.artifacts:
-        data = json.loads(art.api_model_path.read_text())
+        data = json.loads(art.api_model_path.read_text(encoding="utf-8"))
         for ent in data.get("entityDefinitions", []):
             for d in ent.get("domains", []) or []:
                 seen.setdefault(d, []).append(ent["name"])
@@ -120,7 +120,7 @@ def load_domain_catalog(
     domains.sort(key=lambda d: d.name)
 
     if overrides_path and overrides_path.exists():
-        raw = yaml.safe_load(overrides_path.read_text()) or {}
+        raw = yaml.safe_load(overrides_path.read_text(encoding="utf-8")) or {}
         existing = {d.name: d for d in domains}
         for entry in raw.get("domains", []):
             existing[entry["name"]] = Domain(

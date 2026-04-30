@@ -75,7 +75,7 @@ def _load_overlay() -> dict[str, Any]:
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception as e:
         log.warning("runtime overrides parse failed: %s", e)
         return {}
@@ -84,7 +84,7 @@ def _load_overlay() -> dict[str, Any]:
 def _write_overlay(overlay: dict[str, Any]) -> None:
     p = Path(RUNTIME_OVERRIDES_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(overlay, indent=2))
+    p.write_text(json.dumps(overlay, indent=2), encoding="utf-8")
 
 
 # ── Request / response shapes ──────────────────────────────────────────────
@@ -522,7 +522,7 @@ class _temp_overlay:
     def __enter__(self) -> None:
         self._original = self._path.read_bytes() if self._path.exists() else None
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._overlay, indent=2))
+        self._path.write_text(json.dumps(self._overlay, indent=2), encoding="utf-8")
 
     def __exit__(self, *exc: Any) -> None:
         if self._original is None:
@@ -542,7 +542,7 @@ def _load_secrets() -> dict[str, str]:
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -551,7 +551,7 @@ def _write_secrets(secrets: dict[str, str]) -> None:
     p = Path(RUNTIME_SECRETS_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     # 0600 — owner read/write only.
-    p.write_text(json.dumps(secrets, indent=2))
+    p.write_text(json.dumps(secrets, indent=2), encoding="utf-8")
     try:
         os.chmod(p, 0o600)
     except Exception:

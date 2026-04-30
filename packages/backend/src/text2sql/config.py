@@ -25,7 +25,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     out: dict[str, str] = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -252,7 +252,7 @@ def _load_runtime_secrets() -> dict[str, str]:
     if not p.exists():
         return {}
     try:
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(encoding="utf-8"))
         return {str(k): str(v) for k, v in data.items()}
     except Exception:
         return {}
@@ -302,10 +302,10 @@ def load_config(
         **os.environ,
     }
 
-    raw = yaml.safe_load(cfg_path.read_text())
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if overlay_p.exists():
         try:
-            overlay = json.loads(overlay_p.read_text())
+            overlay = json.loads(overlay_p.read_text(encoding="utf-8"))
             raw = _deep_merge(raw, overlay)
         except Exception:
             # Bad overlay shouldn't brick boot — log and continue.
