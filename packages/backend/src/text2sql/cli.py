@@ -8,6 +8,18 @@ from pathlib import Path
 
 import typer
 
+# Windows ships with cp1252 as the default stdout/stderr encoding, which
+# explodes on the first non-ASCII byte (curly quotes, →, emojis,
+# accented chars in error messages from libraries we don't control).
+# Force utf-8 so `text2sql ingest`, `serve`, `chat`, and every other
+# subcommand can print human-friendly output everywhere. errors="replace"
+# means even a stray binary byte renders as `?` instead of crashing.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 from text2sql.config import REPO_ROOT, load_config
 from text2sql.ingestion.edfi_fetcher import IngestionConfig, IngestionManifest, fetch_all, verify_manifest
 
