@@ -18,6 +18,7 @@ import textwrap
 import pytest
 
 from text2sql.catalog_inputs import (
+    CatalogInputs,
     ColumnRow,
     RelationshipsCsvError,
     SchemaCsvError,
@@ -264,3 +265,85 @@ def test_relationships_csv_preserves_group_order_across_file():
     edges = parse_relationships_csv(csv_text)
     assert [e.constraint_name for e in edges] == ["FK_B", "FK_A"]
     assert edges[0].column_pairs == (("Xid", "Yid"), ("Xid2", "Yid2"))
+
+
+# ── CatalogInputs aggregator — Q3 ───────────────────────────────────────────
+
+
+def test_catalog_inputs_from_csvs_assembles_both_sides():
+    schema = _schema_csv("""
+        Ranking,Domain,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,Populated
+        0,Student,edfi,Student,StudentUSI,Yes
+        0,Student,edfi,Student,FirstName,Yes
+        0,Enrollment,edfi,StudentSchoolAssoc,StudentUSI,Yes
+        0,Enrollment,edfi,StudentSchoolAssoc,SchoolId,Yes
+        1,EducationOrg,edfi,School,SchoolId,Yes
+    """)
+    rels = _rel_csv("""
+        FK_Name,Parent_Table,Parent_Column,Referenced_Table,Referenced_Column,Parent_Schema,Referenced_Schema
+        FK_StudentSchool_Student,StudentSchoolAssoc,StudentUSI,Student,StudentUSI,edfi,edfi
+        FK_StudentSchool_School,StudentSchoolAssoc,SchoolId,School,SchoolId,edfi,edfi
+    """)
+    inputs = CatalogInputs.from_csvs(schema, rels)
+    assert inputs.table_count == 3
+    assert inputs.column_count == 5
+    assert inputs.fk_count == 2
+    # File order: Student, StudentSchoolAssoc, School
+    assert inputs.tables_in_order == (
+        "edfi.Student", "edfi.StudentSchoolAssoc", "edfi.School",
+    )
+
+
+def test_catalog_inputs_domain_taxonomy_is_csv_data():
+    """Domain list comes from the CSV's distinct values, ranked. No
+    hard-coded 35-list anymore."""
+    schema = _schema_csv("""
+        Ranking,Domain,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,Populated
+        0,Student,edfi,Student,StudentUSI,Yes
+        2,Reporting,edfi,X,Xid,Yes
+        1,Enrollment,edfi,SSA,StudentUSI,Yes
+    """)
+    rels = "FK_Name,Parent_Table,Parent_Column,Referenced_Table,Referenced_Column,Parent_Schema,Referenced_Schema\n"
+    inputs = CatalogInputs.from_csvs(schema, rels)
+    assert inputs.domains == ("Student", "Enrollment", "Reporting")
+
+
+def test_domain_for_table_picks_lowest_ranking():
+    """When a table's columns map to multiple domains, the lowest
+    Ranking wins (= highest priority)."""
+    schema = _schema_csv("""
+        Ranking,Domain,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,Populated
+        2,Reporting,edfi,Student,StudentUSI,Yes
+        0,Student,edfi,Student,FirstName,Yes
+        1,Demographics,edfi,Student,Sex,Yes
+    """)
+    rels = "FK_Name,Parent_Table,Parent_Column,Referenced_Table,Referenced_Column,Parent_Schema,Referenced_Schema\n"
+    inputs = CatalogInputs.from_csvs(schema, rels)
+    assert inputs.domain_for_table("edfi.Student") == "Student"
+
+
+def test_domain_for_table_returns_none_when_table_absent():
+    schema = _schema_csv("""
+        Ranking,Domain,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,Populated
+        0,Student,edfi,Student,StudentUSI,Yes
+    """)
+    rels = "FK_Name,Parent_Table,Parent_Column,Referenced_Table,Referenced_Column,Parent_Schema,Referenced_Schema\n"
+    inputs = CatalogInputs.from_csvs(schema, rels)
+    assert inputs.domain_for_table("edfi.Mystery") is None
+
+
+def test_fk_edges_for_table_returns_only_outgoing():
+    schema = _schema_csv("""
+        Ranking,Domain,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,Populated
+        0,Enrollment,edfi,SSA,StudentUSI,Yes
+    """)
+    rels = _rel_csv("""
+        FK_Name,Parent_Table,Parent_Column,Referenced_Table,Referenced_Column,Parent_Schema,Referenced_Schema
+        FK_SSA_Student,SSA,StudentUSI,Student,StudentUSI,edfi,edfi
+        FK_SSA_School,SSA,SchoolId,School,SchoolId,edfi,edfi
+        FK_Other,Foo,Fooid,Bar,Barid,edfi,edfi
+    """)
+    inputs = CatalogInputs.from_csvs(schema, rels)
+    out = inputs.fk_edges_for_table("edfi.SSA")
+    assert {e.constraint_name for e in out} == {"FK_SSA_Student", "FK_SSA_School"}
+    assert inputs.fk_edges_for_table("edfi.Foo")[0].constraint_name == "FK_Other"

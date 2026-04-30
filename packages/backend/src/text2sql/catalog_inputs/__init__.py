@@ -19,6 +19,7 @@ This package is the single upstream contract for `catalog_builder` —
 no other module should reach for ApiModel.json or 0030-ForeignKeys.sql.
 """
 
+from text2sql.catalog_inputs.loader import CatalogInputs
 from text2sql.catalog_inputs.relationships_csv import (
     RelationshipsCsvError,
     parse_relationships_csv,
@@ -30,6 +31,7 @@ from text2sql.catalog_inputs.schema_csv import (
 )
 
 __all__ = [
+    "CatalogInputs",
     "ColumnRow",
     "RelationshipsCsvError",
     "SchemaCsvError",
