@@ -86,7 +86,7 @@ export default function SettingsPage() {
       </div>
 
       <DatabaseConnectorForm config={config} onSaved={refresh} />
-      <MetadataDatabaseCard config={config} />
+      <MetadataDatabaseCard config={config} onSaved={refresh} />
       <LLMConnectorForm config={config} onSaved={refresh} />
       <EmbeddingConnectorForm config={config} onSaved={refresh} />
       <RebuildPanel />
@@ -249,10 +249,24 @@ function DatabaseConnectorForm({ config, onSaved }: { config: AdminConfig; onSav
 
 // ── Metadata DB (gold + conversations) ─────────────────────────────────
 
-function MetadataDatabaseCard({ config }: { config: AdminConfig }) {
+function MetadataDatabaseCard({ config, onSaved }: { config: AdminConfig; onSaved: () => void }) {
   const meta = (config.metadata_db ?? {}) as Record<string, unknown>;
-  const kind = String(meta.kind ?? "");
+  const initialKind = (String(meta.kind ?? "sqlite") as "sqlite" | "postgresql" | "mssql");
+
+  const [kind, setKind] = useState<"sqlite" | "postgresql" | "mssql">(initialKind);
+  const [path, setPath] = useState<string>(String(meta.path ?? "data/artifacts/metadata.sqlite"));
+  const [host, setHost] = useState<string>(String(meta.host ?? "127.0.0.1"));
+  const [port, setPort] = useState<number>(Number(meta.port ?? (initialKind === "mssql" ? 1433 : 5432)));
+  const [database, setDatabase] = useState<string>(String(meta.database ?? "text2sql_meta"));
+  const [user, setUser] = useState<string>(String(meta.user ?? "edfi"));
   const [test, setTest] = useState<TestState>({ pending: false });
+  const [save, setSave] = useState<TestState>({ pending: false });
+
+  // When the user switches kind, default the port to whatever that kind expects.
+  useEffect(() => {
+    if (kind === "postgresql") setPort((p) => (p === 1433 ? 5432 : p));
+    if (kind === "mssql") setPort((p) => (p === 5432 ? 1433 : p));
+  }, [kind]);
 
   async function runTest() {
     setTest({ pending: true });
@@ -270,71 +284,64 @@ function MetadataDatabaseCard({ config }: { config: AdminConfig }) {
     }
   }
 
-  // Render the right body for each kind. Always read-only — switching
-  // metadata kind moves gold + conversations out from under live data,
-  // so we don't expose it as a one-click UI action.
-  function renderSpec() {
-    if (kind === "sqlite") {
-      return (
-        <div className="text-sm space-y-1">
-          <Row label="Path" value={String(meta.path ?? "")} mono />
-          <p className="text-xs text-muted">
-            Single SQLite file holding gold queries + conversation history.
-            Ideal for the zero-infra single-user demo.
-          </p>
-        </div>
-      );
+  async function runSave() {
+    setSave({ pending: true });
+    try {
+      const body: Record<string, unknown> =
+        kind === "sqlite"
+          ? { kind, path }
+          : { kind, host, port, database, user };
+      await postJson("/admin/config", { metadata_db: body });
+      setSave({ pending: false, ok: true, detail: "Saved. Restart the server for the change to take full effect." });
+      onSaved();
+    } catch (e) {
+      setSave({ pending: false, ok: false, error: String(e) });
     }
-    if (kind === "mssql" || kind === "postgresql") {
-      return (
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <Row label="Host" value={String(meta.host ?? "")} mono />
-          <Row label="Port" value={String(meta.port ?? "")} mono />
-          <Row label="Database" value={String(meta.database ?? "")} mono />
-          <Row label="User" value={String(meta.user ?? "")} mono />
-        </div>
-      );
-    }
-    return (
-      <div className="text-xs text-muted">
-        Unknown metadata DB kind: {kind || "(unset)"}
-      </div>
-    );
   }
 
   return (
     <FormCard
       title="Metadata database"
-      subtitle="Stores gold SQL + conversation history. Independent of the target DB; supports postgresql / mssql / sqlite. Read-only here — switch by editing the YAML or runtime overlay."
+      subtitle="Stores gold SQL + conversation history. SQLite (a single file) is the zero-infra default — works on Windows without Docker. Switch to Postgres/MSSQL for multi-user deployments."
     >
-      <div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-3 items-start">
-        <div>
-          <div className="text-xs text-muted">Kind</div>
-          <div className="font-mono text-sm text-accent">{kind || "(unset)"}</div>
-        </div>
-        <div>{renderSpec()}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Type">
+          <select className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+            <option value="sqlite">SQLite (file — zero infra)</option>
+            <option value="postgresql">PostgreSQL</option>
+            <option value="mssql">MSSQL Server / Azure SQL</option>
+          </select>
+        </Field>
+
+        {kind === "sqlite" ? (
+          <Field label="File path" full>
+            <input className={inputCls} value={path} onChange={(e) => setPath(e.target.value)}
+                   placeholder="data/artifacts/metadata.sqlite" />
+          </Field>
+        ) : (
+          <>
+            <Field label="Host">
+              <input className={inputCls} value={host} onChange={(e) => setHost(e.target.value)} />
+            </Field>
+            <Field label="Port">
+              <input className={inputCls} type="number" value={port}
+                     onChange={(e) => setPort(Number(e.target.value))} />
+            </Field>
+            <Field label="Database">
+              <input className={inputCls} value={database} onChange={(e) => setDatabase(e.target.value)} />
+            </Field>
+            <Field label="User">
+              <input className={inputCls} value={user} onChange={(e) => setUser(e.target.value)} />
+            </Field>
+            <div className="col-span-full text-xs text-muted">
+              Password comes from the <code className="font-mono">METADATA_DB_PASSWORD</code> env var
+              (set in <code className="font-mono">.env</code>) — never persisted to the overlay.
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="mt-4 flex items-center gap-3 text-sm">
-        <button
-          onClick={runTest}
-          disabled={test.pending}
-          className="border border-border rounded px-3 py-1 hover:border-accent hover:text-accent disabled:opacity-50"
-        >
-          {test.pending ? "Testing…" : "Test connection"}
-        </button>
-        {!test.pending && test.ok === true && (
-          <span className="text-emerald-400 text-xs">
-            ok · {test.elapsed_ms?.toFixed(0)} ms
-            {test.detail && ` · ${test.detail.slice(0, 90)}`}
-          </span>
-        )}
-        {!test.pending && test.ok === false && (
-          <span className="text-red-400 text-xs whitespace-pre-wrap">
-            {test.error}
-          </span>
-        )}
-      </div>
+      <FormActions onTest={runTest} onSave={runSave} test={test} save={save} />
     </FormCard>
   );
 }

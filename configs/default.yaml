@@ -218,20 +218,19 @@ target_db:
       read_only: true
 
 metadata_db:
-  # Default metadata DB is Postgres for prod-like deployments. The
-  # zero-infra alternative is the commented sqlite block below — flip
-  # by setting METADATA_DB_KIND=sqlite in .env, or via the Settings UI
-  # which writes data/artifacts/runtime_overrides.json.
-  kind: ${METADATA_DB_KIND:-postgresql}
+  # Default metadata DB is SQLite — zero infra, works on Windows without
+  # Docker, no Postgres install needed. Stores gold SQL + conversation
+  # history in a single file under data/artifacts/. Prod deployments
+  # that want Postgres set METADATA_DB_KIND=postgresql in .env (the
+  # host/port/user/database fields below kick in then).
+  kind: ${METADATA_DB_KIND:-sqlite}
+  path: ${METADATA_DB_PATH:-data/artifacts/metadata.sqlite}
+  # Postgres / MSSQL fallback fields — only consulted when kind != sqlite.
   host: ${METADATA_DB_HOST:-127.0.0.1}
   port: ${METADATA_DB_PORT:-5432}
   database: ${METADATA_DB_NAME:-text2sql_meta}
   user: ${METADATA_DB_USER:-edfi}
   password_env: METADATA_DB_PASSWORD
-  # SQLite alternative — overrides the network fields above when
-  # kind=sqlite (extra="allow" on MetadataDb keeps Postgres fields
-  # tolerated as ignored noise). Resolved relative to REPO_ROOT.
-  path: ${METADATA_DB_PATH:-data/artifacts/metadata.sqlite}
 
 logging:
   level: ${LOG_LEVEL:-INFO}
