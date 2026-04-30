@@ -267,9 +267,13 @@ def build_table_catalog_cmd(
             # slot so users can route a cheaper model here (it runs once
             # per ~800 tables at build time).
             llm = build_llm(cfg.llm_for_task("catalog_description"))
+            # Cache lives under the active provider's artifact dir so a
+            # different target DB (different sample rows → different
+            # prompts) doesn't accidentally hit a stale cached blurb.
+            from text2sql.config import resolve_artifact_path
             desc_gen = DescriptionGenerator(
                 llm,
-                cache_path=REPO_ROOT / "data/artifacts/.description_cache.json",
+                cache_path=resolve_artifact_path(cfg, ".description_cache.json", write=True),
             )
             typer.echo(f"Description LLM (gap-fill only): {llm.model_id}")
         except Exception as e:
