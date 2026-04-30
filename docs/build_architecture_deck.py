@@ -1,13 +1,14 @@
-"""Generate the Ed-Fi Text-to-SQL architecture deck.
+"""Generate the Ed-Fi Text-to-SQL client-facing architecture deck.
 
 Run with:
     uvx --from python-pptx python docs/build_architecture_deck.py
 
 Produces docs/architecture_deck.pptx.
 
-Layout philosophy: dark slides, accent color, dense but readable. Each
-slide is one concept, no fluff. Speaker notes carry the deeper detail
-the title can't fit.
+Audience: client / business stakeholder. Frame the work in outcomes,
+not file paths. The semantic schema layer and the foreign-key graph
+are positioned as the foundation we've delivered; everything else is
+the upcoming work tracked through May 8.
 """
 from __future__ import annotations
 
@@ -20,24 +21,18 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 # ── Palette ────────────────────────────────────────────────────────────────
-BG       = RGBColor(0x0F, 0x14, 0x1A)   # deep slate
+BG       = RGBColor(0x0F, 0x14, 0x1A)
 PANEL    = RGBColor(0x1A, 0x21, 0x2A)
 BORDER   = RGBColor(0x2A, 0x33, 0x3F)
 TEXT     = RGBColor(0xE6, 0xEA, 0xF0)
 MUTED    = RGBColor(0x8A, 0x95, 0xA5)
-ACCENT   = RGBColor(0x6E, 0xC1, 0xFF)   # cyan
+ACCENT   = RGBColor(0x6E, 0xC1, 0xFF)
 GREEN    = RGBColor(0x4A, 0xD0, 0x9C)
 AMBER    = RGBColor(0xF2, 0xB8, 0x57)
 RED      = RGBColor(0xE5, 0x6B, 0x6B)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-
-
-def _fill(shape, color):
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = color
-    shape.line.fill.background()
 
 
 def _set_text(tf, text, *, size=18, bold=False, color=TEXT, align=PP_ALIGN.LEFT):
@@ -126,6 +121,16 @@ def _notes(slide, text):
     slide.notes_slide.notes_text_frame.text = text
 
 
+def _status_chip(slide, *, left, top, label, color):
+    chip = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                    Inches(left), Inches(top), Inches(1.2), Inches(0.32))
+    chip.fill.solid(); chip.fill.fore_color.rgb = color
+    chip.line.fill.background()
+    tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(1.2), Inches(0.32))
+    tf = tb.text_frame; tf.margin_left = tf.margin_right = Inches(0); tf.margin_top = Inches(0.04)
+    _set_text(tf, label, size=10, bold=True, color=BG, align=PP_ALIGN.CENTER)
+
+
 # ── Deck construction ─────────────────────────────────────────────────────
 
 
@@ -137,557 +142,500 @@ def build():
 
     # ── Slide 1: Title ────────────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "Ed-Fi Text-to-SQL Platform", left=0.8, top=2.4, width=11.7, height=1.0,
-              size=44, bold=True, color=ACCENT)
-    _add_text(s, "Architecture, status, and the path to demo", left=0.8, top=3.4, width=11.7, height=0.6,
-              size=20, color=TEXT)
-    _add_text(s, "Status review · Apr 30, 2026  ·  target: Fri May 8", left=0.8, top=4.2, width=11.7, height=0.4,
-              size=14, color=MUTED)
-    _add_text(s, "Engineering update · internal", left=0.8, top=6.6, width=11.7, height=0.4,
-              size=12, color=MUTED)
+    _add_text(s, "Ed-Fi Text-to-SQL", left=0.8, top=2.1, width=11.7, height=1.0,
+              size=46, bold=True, color=ACCENT)
+    _add_text(s, "Ask questions of your school data in plain English",
+              left=0.8, top=3.15, width=11.7, height=0.6,
+              size=22, color=TEXT)
+    _add_text(s, "Progress update — foundation delivered, integration ahead",
+              left=0.8, top=3.85, width=11.7, height=0.5,
+              size=16, color=MUTED)
+    _add_text(s, "Apr 30, 2026  ·  client review  ·  target demo Fri May 8",
+              left=0.8, top=6.6, width=11.7, height=0.4,
+              size=13, color=MUTED)
+    _notes(s, "Set the room: this is a status update, not a final review. Two big technical "
+              "pieces are done — the semantic schema layer and the foreign-key graph. Those are "
+              "the foundation everything else sits on. Today I'll show what each is, what it "
+              "unlocks, and the concrete plan to demo by Friday May 8.")
 
-    # ── Slide 2: Where we are ─────────────────────────────────────────────
+    # ── Slide 2: The problem ──────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Where we are", "Components built · what works end-to-end today")
+    _add_title(s, "The problem we're solving",
+                  "An analyst asks a question. The platform answers with data.")
 
-    _panel(s, left=0.5, top=1.6, width=6.1, height=5.2, fill=PANEL)
-    _add_text(s, "Done — running in main", left=0.7, top=1.7, width=5.7, height=0.4,
-              size=16, bold=True, color=GREEN)
+    _panel(s, left=0.5, top=1.6, width=12.3, height=2.1, fill=PANEL)
+    _add_text(s, "Today, in any Ed-Fi-shaped database",
+              left=0.7, top=1.7, width=11.9, height=0.4, size=14, bold=True, color=AMBER)
     _bullets(s, [
-        "Ed-Fi metadata ingest (DS 6.1.0 · ~1048 entities)",
-        "Domain classifier (35 domains, multi-label)",
-        "FK graph + APSP + Steiner over ~1900 edges",
-        "Table catalog (per-provider, dialect-aware)",
-        "Embeddings + FAISS index (BGE-M3 default)",
-        "Entity resolver (4-tier funnel)",
-        "Gold SQL store + retrieval",
-        "NL→SQL pipeline + repair loop",
-        "Vega-Lite chart + LLM description",
-        "FastAPI surface (REST + WS streaming)",
-        "Next.js UI: Query / Tables / Domains / Gold / Chat",
-        "Eval harness (6 metrics, JSON + markdown reports)",
-        "Multi-provider LLM (Anthropic / Bedrock / OpenAI / OpenRouter / Azure)",
-        "Multi-dialect target DB (MSSQL / Postgres / SQLite)",
-        "Multi-dialect metadata DB (same trio)",
-        "Per-provider artifact isolation",
-        "Settings UI: editable connectors + Rebuild orchestrator",
-        "Cross-platform: Windows charmap fixes, utf-8 stdout",
-    ], left=0.7, top=2.15, width=5.7, height=4.5, size=12)
+        "1,048 tables · ~10,000 columns · hundreds of foreign keys",
+        "An analyst with a question must (a) know which tables to join, (b) write the SQL, (c) execute it, (d) read it",
+        "End-to-end this is hours of work for a senior engineer — and impossible for a non-engineer",
+    ], left=0.7, top=2.1, width=11.9, height=1.6, size=13)
 
-    _panel(s, left=6.85, top=1.6, width=6.1, height=5.2, fill=PANEL)
-    _add_text(s, "Today's pillars (this deck zooms in)", left=7.05, top=1.7, width=5.7, height=0.4,
-              size=16, bold=True, color=AMBER)
+    _panel(s, left=0.5, top=3.9, width=12.3, height=2.9, fill=PANEL)
+    _add_text(s, "What we're building",
+              left=0.7, top=4.0, width=11.9, height=0.4, size=14, bold=True, color=GREEN)
     _bullets(s, [
-        "Graph layer — FK parse → rustworkx → APSP → Steiner",
-        "Semantic layer — per-table blob → embed → cluster routing",
-        "How they cooperate at query time",
-    ], left=7.05, top=2.15, width=5.7, height=1.5, size=14)
+        "Type a question in English  →  receive correct SQL, the rows it returns, a chart, and a written summary",
+        "Works on any Ed-Fi database (Postgres / MSSQL / SQLite) without changing the database itself",
+        "Cites the tables it used so an engineer can verify the answer in seconds",
+        "Learns from approved queries — the more it's used, the better it gets",
+    ], left=0.7, top=4.4, width=11.9, height=2.4, size=13)
 
-    _add_text(s, "Everything else (pipeline, repair, viz, gold, UI, eval) → covered in next-week plan.",
-              left=7.05, top=5.9, width=5.7, height=0.7, size=12, color=MUTED)
+    _footer(s, "Why this project · Section 1", "")
+    _notes(s, "Anchor in the user pain. Most Ed-Fi work today goes through a small handful of "
+              "people who can write SQL against the model. We're widening that bottleneck — not "
+              "by training more SQL writers but by automating the translation from English.")
 
-    _footer(s, "Section 1/4 · Status", "v0.7 · 215 tests passing")
-
-    _notes(s, "We've cleared 13 of the 14 spec components and added the multi-provider, multi-dialect, "
-              "and per-provider work that wasn't in the original spec but turned out essential for "
-              "operator flexibility. Hardening (#14) is the only one still in flight. Today we'll deep "
-              "dive on the two most complex pieces — graph and semantic — because everything else is "
-              "either a thin orchestrator on top of those, or a UI surface.")
-
-    # ── Slide 3: System map ───────────────────────────────────────────────
+    # ── Slide 3: Status snapshot ──────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "System map", "How a question becomes SQL — annotated dataflow")
+    _add_title(s, "Status: foundation built, integration ahead",
+                  "Two of seven workstreams complete; remaining five planned for the next 7 working days")
+
+    rows = [
+        ("Foreign-Key Graph",       "Done",  GREEN,
+         "Maps how every Ed-Fi table connects to every other; computes the cheapest joins."),
+        ("Semantic Schema Layer",   "Done",  GREEN,
+         "Embeds each table's meaning so questions can find the right tables."),
+        ("Question → SQL pipeline", "Next",  AMBER,
+         "Wire graph + semantics into a routed, validated SQL generator with auto-repair."),
+        ("Validation & Repair",     "Next",  AMBER,
+         "Catch bad SQL before execution; auto-fix the common failure modes."),
+        ("Charts & Descriptions",    "Next",  AMBER,
+         "Pick the right visualization automatically; explain the answer in English."),
+        ("Web UI · Settings · Eval","Next",  AMBER,
+         "Browser experience, operator controls, accuracy dashboards."),
+        ("Hardening & Demo",         "Next",  AMBER,
+         "Multi-provider polish, observability, recorded demo on a clean machine."),
+    ]
+    _panel(s, left=0.5, top=1.6, width=12.3, height=5.2, fill=PANEL)
+    y = 1.75
+    for label, status, color, what in rows:
+        _add_text(s, label, left=0.8, top=y, width=4.0, height=0.35,
+                  size=14, bold=True, color=TEXT)
+        _status_chip(s, left=4.95, top=y + 0.02, label=status, color=color)
+        _add_text(s, what, left=6.4, top=y + 0.02, width=6.4, height=0.35,
+                  size=12, color=MUTED)
+        y += 0.72
+
+    _footer(s, "Status snapshot", "Two of seven complete · 7 working days to demo")
+    _notes(s, "This single slide is the headline. The two foundational pieces are done — the parts "
+              "that take longest to get right because they involve schema modeling and embeddings. "
+              "Everything else is integration: hooking those pieces together, polishing the UX, "
+              "and verifying accuracy. That's why a 7-working-day plan is realistic.")
+
+    # ── Slide 4: System map ───────────────────────────────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "The big picture",
+                  "How a question becomes an answer · two layers carry it")
 
     layers = [
-        ("Sources",      0.5,  ACCENT, ["Ed-Fi GitHub  ·  ApiModel.json  ·  0030-ForeignKeys.sql", "Live DB  (MSSQL · PG · SQLite)"]),
-        ("Build-time",   0.5,  GREEN,  ["Ingest → Classify → Graph → Catalog → Embed → Gold-seed",
-                                          "Per-provider artifacts on disk, mtime-cached"]),
-        ("Runtime",      0.5,  AMBER,  ["Question → Cluster route → Schema link + Entity resolve",
-                                          "Generator → Validator (parse, EXPLAIN, LIMIT 0) → repair loop",
-                                          "Execute → Vega-Lite + describe"]),
-        ("Surface",      0.5,  ACCENT, ["FastAPI REST + WS  ·  Next.js (Query · Chat · Tables · Settings)"]),
+        ("Question",     ["Analyst types: 'How many Hispanic students enrolled in Grade 9 last year?'"], MUTED),
+        ("Semantic Schema",
+         ["Finds the small set of tables that matter — out of 1,048",
+          "Resolves real-world terms (e.g. 'Hispanic') to the right code in the right table"], GREEN),
+        ("Foreign-Key Graph",
+         ["Computes the cheapest join path between those tables",
+          "Hands the SQL generator ready-to-use JOIN clauses"], GREEN),
+        ("SQL · Validate · Run",
+         ["LLM writes SQL grounded in real columns",
+          "Validator catches errors; repair loop fixes them; engine executes"], AMBER),
+        ("Answer",
+         ["Rows + auto-picked chart + plain-English summary, with the tables cited"], AMBER),
     ]
-
     y = 1.6
-    for label, _, color, lines in layers:
-        _panel(s, left=0.5, top=y, width=12.3, height=1.15, fill=PANEL)
-        _add_text(s, label, left=0.7, top=y + 0.1, width=2.5, height=0.4,
+    for label, lines, color in layers:
+        _panel(s, left=0.5, top=y, width=12.3, height=0.95, fill=PANEL)
+        _add_text(s, label, left=0.7, top=y + 0.1, width=2.7, height=0.4,
                   size=14, bold=True, color=color)
         for j, ln in enumerate(lines):
-            _add_text(s, ln, left=3.2, top=y + 0.1 + j * 0.34, width=9.4, height=0.4,
+            _add_text(s, "• " + ln, left=3.4, top=y + 0.1 + j * 0.32, width=9.2, height=0.4,
                       size=12, color=TEXT)
-        y += 1.3
+        y += 1.10
 
-    _footer(s, "Section 1/4 · Status", "Annotated below in next slides")
-    _notes(s, "Four layers, top to bottom: Sources (Ed-Fi GitHub + the operator's live DB), "
-              "Build-time (the offline pipeline that produces the catalog and graph artifacts), "
-              "Runtime (the per-question NL→SQL flow), and Surface (FastAPI + Next.js). "
-              "Today we focus on Build-time pieces: the graph layer and the semantic layer.")
+    _add_text(s, "Green = built today  ·  Amber = next 7 working days",
+              left=0.5, top=7.05, width=12.3, height=0.3,
+              size=11, color=MUTED, align=PP_ALIGN.CENTER)
+    _notes(s, "Walk top-to-bottom. Pause on the Semantic Schema and Foreign-Key Graph rows — "
+              "those are this deck's protagonists. The bottom rows are next-week work.")
 
-    # ── Slide 4: GRAPH section title ──────────────────────────────────────
+    # ── Slide 5: Section divider — Semantic ───────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "Section 2", left=0.8, top=2.6, width=11.7, height=0.6,
+    _add_text(s, "What's built · 1 of 2", left=0.8, top=2.5, width=11.7, height=0.5,
               size=18, color=MUTED)
-    _add_text(s, "The Graph Layer", left=0.8, top=3.1, width=11.7, height=1.0,
-              size=44, bold=True, color=ACCENT)
-    _add_text(s, "Foreign-key graph · all-pairs shortest path · Steiner tree for joins",
-              left=0.8, top=4.1, width=11.7, height=0.5, size=18, color=TEXT)
-    _notes(s, "The graph layer turns a flat list of FK constraints into a queryable structure that "
-              "knows the cheapest way to join any 2 (or k) tables. Everything downstream — schema "
-              "linking, JOIN expansion, Steiner — depends on it.")
+    _add_text(s, "The Semantic Schema Layer", left=0.8, top=3.05, width=11.7, height=1.0,
+              size=44, bold=True, color=GREEN)
+    _add_text(s, "How the platform finds the right tables for an English question",
+              left=0.8, top=4.05, width=11.7, height=0.5, size=18, color=TEXT)
+    _notes(s, "If we just gave the LLM 1,048 tables and asked it to pick, accuracy would collapse "
+              "and cost would explode. The semantic layer is the search index that fixes that.")
 
-    # ── Slide 5: Graph build pipeline ─────────────────────────────────────
+    # ── Slide 6: Per-table understanding ──────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Graph build pipeline", "From SQL DDL to traversal-ready artifacts")
-
-    stages = [
-        ("0030-ForeignKeys.sql",   "Ed-Fi DDL"),
-        ("parse_fks (sqlglot)",    "FKEdge[]"),
-        ("Reflect live FKs",        "+ extras (P7)"),
-        ("build_graph (rustworkx)","weighted undirected"),
-        ("APSP (Dijkstra ×N)",     "dist.npy + next_hop.npy"),
-        ("Steiner solvers",         "K2 / KMB / Yen's"),
-    ]
-
-    n = len(stages)
-    box_w, box_h = 1.85, 1.0
-    spacing = 0.18
-    total_w = n * box_w + (n - 1) * spacing
-    x0 = (13.333 - total_w) / 2
-    y = 2.4
-
-    for i, (label, sub) in enumerate(stages):
-        x = x0 + i * (box_w + spacing)
-        _panel(s, left=x, top=y, width=box_w, height=box_h, fill=PANEL, border=ACCENT)
-        _add_text(s, label, left=x + 0.05, top=y + 0.08, width=box_w - 0.1, height=0.4,
-                  size=11, bold=True, color=ACCENT, align=PP_ALIGN.CENTER)
-        _add_text(s, sub, left=x + 0.05, top=y + 0.55, width=box_w - 0.1, height=0.35,
-                  size=10, color=MUTED, align=PP_ALIGN.CENTER)
-        if i < n - 1:
-            _connector(s, x + box_w, y + box_h / 2,
-                          x + box_w + spacing, y + box_h / 2,
-                       color=ACCENT, weight=1.5, arrow=True)
-
-    _panel(s, left=0.5, top=4.0, width=12.3, height=2.6, fill=PANEL)
-    _add_text(s, "Edge weighting (configs/default.yaml::graph)", left=0.7, top=4.1, width=12, height=0.4,
-              size=14, bold=True, color=AMBER)
-    _bullets(s, [
-        "Aggregate-internal edges:  weight = 1.0   (cheap — same conceptual entity)",
-        "Cross-aggregate edges:     weight = 2.0   (more expensive)",
-        "Cross-domain edges:        weight = 4.0   (bias against semantic leaps)",
-        "Composite-FK edges:        weight × 0.9   (slight bonus — schema author's intent)",
-        "Reflected non-Ed-Fi edges (P7): weight = 3.0 (extension tables, treat with caution)",
-    ], left=0.7, top=4.55, width=12, height=2.0, size=12)
-
-    _footer(s, "Section 2 · Graph", "graph/builder.py · graph/fk_parser.py · graph/apsp.py")
-    _notes(s, "The pipeline is fully deterministic from a fixed Ed-Fi version + live DB schema. "
-              "rustworkx (Rust-backed) gives us 5-10x speed over networkx for the all-pairs Dijkstra. "
-              "Artifacts persist as numpy memmaps so the API process loads them at startup in <100ms.")
-
-    # ── Slide 6: Steiner solvers ──────────────────────────────────────────
-    s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Steiner: minimal join paths for k tables",
-                  "Three solvers, picked by k")
-
-    rows = [
-        ("k = 2",  "Bidirectional Dijkstra → top-3 via Yen's k-shortest", GREEN,
-         "Returns 3 candidate paths so the LLM can pick whichever joins best read.",
-         "<5ms cold, <0.5ms warm"),
-        ("k ≥ 3",  "KMB approximation (Kou–Markowsky–Berman)", AMBER,
-         "Polynomial-time 2-approximation. Good enough for typical k=3-5.",
-         "<50ms"),
-        ("k > 8",  "Greedy fallback + LLM-pruned candidate set",   RED,
-         "Ed-Fi questions rarely span >8 tables; trade optimality for latency.",
-         "<200ms"),
-    ]
-    y = 1.7
-    for tag, algo, color, why, perf in rows:
-        _panel(s, left=0.5, top=y, width=12.3, height=1.5, fill=PANEL)
-        _add_text(s, tag, left=0.7, top=y + 0.15, width=1.4, height=0.4,
-                  size=18, bold=True, color=color)
-        _add_text(s, algo, left=2.2, top=y + 0.15, width=10.7, height=0.4,
-                  size=14, bold=True, color=TEXT)
-        _add_text(s, why, left=2.2, top=y + 0.6, width=8.7, height=0.7,
-                  size=12, color=MUTED)
-        _add_text(s, perf, left=10.9, top=y + 0.6, width=2.0, height=0.4,
-                  size=11, color=ACCENT, align=PP_ALIGN.RIGHT)
-        y += 1.65
-
-    _add_text(s, "Result: ready-to-paste JOIN clauses with composite-column tuples preserved",
-              left=0.5, top=6.6, width=12.3, height=0.4, size=13, color=ACCENT, align=PP_ALIGN.CENTER)
-
-    _footer(s, "Section 2 · Graph", "graph/steiner.py · graph/joins.py")
-    _notes(s, "Steiner is the heart of the join-discovery problem: given the tables the linker chose, "
-              "find the cheapest tree that connects them. We pick the algorithm by tree size because "
-              "exact Steiner is NP-hard. The graph weights mean the result tracks Ed-Fi aggregate "
-              "boundaries — joins inside Student stay inside Student.")
-
-    # ── Slide 7: Graph numbers + artifacts ────────────────────────────────
-    s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Graph: scale + on-disk shape", "What the artifacts look like")
-
-    _panel(s, left=0.5, top=1.6, width=6.1, height=5.2, fill=PANEL)
-    _add_text(s, "Numbers (DS 6.1.0)", left=0.7, top=1.7, width=5.7, height=0.4,
-              size=16, bold=True, color=ACCENT)
-    rows = [
-        ("Tables (nodes)",       "~1048"),
-        ("FK constraints",        "~1900 (after composite-FK collapse)"),
-        ("APSP matrix",           "1048 × 1048 int32"),
-        ("dist.npy",              "~4.2 MB"),
-        ("next_hop.npy",          "~4.2 MB"),
-        ("edge_meta.msgpack",     "~120 KB (column-pair metadata)"),
-        ("Cold load (mmap)",      "<80 ms"),
-        ("Steiner cache hit rate","~85% in eval suite"),
-    ]
-    y = 2.1
-    for k, v in rows:
-        _add_text(s, k, left=0.7, top=y, width=3.4, height=0.35, size=12, color=MUTED)
-        _add_text(s, v, left=4.1, top=y, width=2.5, height=0.35, size=12, bold=True, color=TEXT)
-        y += 0.42
-
-    _panel(s, left=6.85, top=1.6, width=6.1, height=5.2, fill=PANEL)
-    _add_text(s, "Artifacts on disk", left=7.05, top=1.7, width=5.7, height=0.4,
-              size=16, bold=True, color=ACCENT)
-    files = [
-        "data/artifacts/per_provider/<name>/",
-        "  graph/",
-        "    nodes.json          ← table_id ↔ fqn",
-        "    edges.msgpack       ← FK records w/ column pairs",
-        "    dist.npy            ← APSP distance matrix",
-        "    next_hop.npy        ← APSP predecessor matrix",
-        "    weights.json        ← per-edge weight derivation",
-        "    manifest.json       ← provider_name + dialect + sha",
-    ]
-    y = 2.1
-    for ln in files:
-        _add_text(s, ln, left=7.05, top=y, width=5.7, height=0.32,
-                  size=11, color=TEXT if not ln.startswith(" ") else MUTED)
-        y += 0.36
-
-    _footer(s, "Section 2 · Graph", "Single rebuild per provider; mtime cache shared across requests")
-    _notes(s, "The graph artifacts are the smallest and fastest part of the build. The whole graph "
-              "loads from disk in under 100ms, so the API can re-hydrate freshly per request when "
-              "the operator switches providers via Settings.")
-
-    # ── Slide 8: SEMANTIC section title ───────────────────────────────────
-    s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "Section 3", left=0.8, top=2.6, width=11.7, height=0.6,
-              size=18, color=MUTED)
-    _add_text(s, "The Semantic Layer", left=0.8, top=3.1, width=11.7, height=1.0,
-              size=44, bold=True, color=ACCENT)
-    _add_text(s, "Per-table blob · embedding model · cluster routing · entity resolution",
-              left=0.8, top=4.1, width=11.7, height=0.5, size=18, color=TEXT)
-    _notes(s, "Semantic layer is what makes natural language land on the right tables. Without it "
-              "the LLM would have to read the entire schema cold every question.")
-
-    # ── Slide 9: Per-table blob ───────────────────────────────────────────
-    s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Per-table semantic blob", "What we embed for each of the ~1048 tables")
+    _add_title(s, "What we know about each table",
+                  "Captured once at build time; queried millions of times after")
 
     _panel(s, left=0.5, top=1.6, width=7.4, height=5.4, fill=PANEL)
     blob = [
-        "[TABLE] edfi.StudentSchoolAssociation",
-        "[DOMAINS] Student, EnrollmentAndSchoolAssociation",
-        "[SUBCLUSTERS] Student/Enrollment, ESA/SchoolEnrollment",
+        "Table:  edfi.StudentSchoolAssociation",
+        "Domains:  Student · Enrollment",
         "",
-        "[DESCRIPTION]",
+        "Description:",
         "Tracks a student's relationship with a school —",
-        "primary or secondary enrollment, entry / exit dates,",
-        "grade level, and entry type.",
+        "primary or secondary enrollment, entry / exit",
+        "dates, grade level, and entry type.",
         "",
-        "[KEY_COLUMNS]",
-        "  StudentUSI (PK, identifying)",
-        "  SchoolId (PK, identifying)",
-        "  EntryDate (PK, time anchor)",
+        "Identifying columns:",
+        "  StudentUSI  ·  SchoolId  ·  EntryDate",
         "",
-        "[COLUMN_SEMANTICS]",
-        "  EntryGradeLevelDescriptorId → edfi.GradeLevelDescriptor",
+        "Linked columns:",
+        "  EntryGradeLevelDescriptorId → GradeLevelDescriptor",
         "  ExitWithdrawTypeDescriptorId → enums",
         "",
-        "[NEIGHBORS]  edfi.Student · edfi.School · ...",
-        "[GOLD_QUERY_COUNT] 12   ← drives retrieval recall",
+        "Connected tables:",
+        "  edfi.Student · edfi.School · edfi.Section ...",
+        "",
+        "Proven queries that use it:  12",
     ]
-    y = 1.75
+    y = 1.78
     for ln in blob:
-        c = ACCENT if ln.startswith("[") else TEXT
-        sz = 12 if ln.startswith("[") else 11
-        b = ln.startswith("[")
-        _add_text(s, ln, left=0.7, top=y, width=7.0, height=0.28, size=sz, bold=b, color=c)
-        y += 0.24
+        bold = ln.endswith(":") or ln.startswith(("Table:", "Domains:"))
+        c = ACCENT if bold else (TEXT if ln else MUTED)
+        sz = 13 if bold else 12
+        _add_text(s, ln, left=0.7, top=y, width=7.0, height=0.28, size=sz, bold=bold, color=c)
+        y += 0.26
 
     _panel(s, left=8.15, top=1.6, width=4.8, height=5.4, fill=PANEL)
-    _add_text(s, "Why this shape", left=8.35, top=1.7, width=4.4, height=0.4,
+    _add_text(s, "Why this works", left=8.35, top=1.7, width=4.4, height=0.4,
               size=16, bold=True, color=AMBER)
     _bullets(s, [
-        "DOMAINS + SUBCLUSTERS give the routing layer a first-pass filter",
-        "DESCRIPTION carries Ed-Fi's authoritative human prose verbatim",
-        "KEY_COLUMNS surface PKs without scanning columns",
-        "COLUMN_SEMANTICS links descriptor refs so entity resolver can chase them",
-        "NEIGHBORS encode local FK structure for the LLM",
-        "GOLD_QUERY_COUNT biases retrieval toward proven tables",
+        "Domains let us narrow 1,048 tables to ~30 in milliseconds",
+        "Description carries authoritative Ed-Fi prose — no LLM hallucination",
+        "Identifying columns surface what each row 'is'",
+        "Linked columns chase descriptor codes (e.g. 'Hispanic' → RaceDescriptor)",
+        "Connected tables remind the model what joins are natural",
+        "Proven-query count biases the search toward tables the platform has answered before",
     ], left=8.35, top=2.15, width=4.4, height=4.5, size=11)
 
-    _footer(s, "Section 3 · Semantic", "embedding/blob_builder.py")
-    _notes(s, "We tried column-only embeddings first and got terrible recall — the model couldn't "
-              "tell StudentSchoolAssociation from StudentSectionAssociation. Adding the structured "
-              "tags ([DOMAINS], [NEIGHBORS], etc.) fixed it: cosine similarity now jumps 30 points "
-              "for the right table on typical Ed-Fi questions.")
+    _footer(s, "Built — Semantic Schema · 1 of 3", "")
+    _notes(s, "Each of the 1,048 tables has this kind of profile, captured at build time. The "
+              "profile is then turned into a numerical fingerprint (an embedding) that the "
+              "platform can match against any incoming question.")
 
-    # ── Slide 10: Vector store + clustering ───────────────────────────────
+    # ── Slide 7: Search & route ───────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Vector store + cluster routing", "Hybrid retrieval, top-3 cluster pick")
+    _add_title(s, "How a question finds its tables",
+                  "Two fast searches narrow 1,048 tables to a handful")
 
-    _panel(s, left=0.5, top=1.6, width=12.3, height=2.5, fill=PANEL)
-    _add_text(s, "Collections (FAISS by default, Qdrant / OpenSearch / Azure Search via factory)",
+    _panel(s, left=0.5, top=1.6, width=12.3, height=2.7, fill=PANEL)
+    _add_text(s, "Step 1 — pick the right neighborhood",
               left=0.7, top=1.7, width=12, height=0.4, size=14, bold=True, color=ACCENT)
-    cols = [
-        ("clusters",      "Per (domain, sub-cluster) — top-level routing target"),
-        ("tables",         "Per-table blob — schema linking inside a chosen cluster"),
-        ("column_values", "Distinct lookup values — entity resolver tier 3"),
-        ("gold_sql",       "NL → tested SQL — few-shot retrieval (top-3 after rerank)"),
-        ("business_docs",  "Optional org-specific docs — semantic context augmentation"),
-    ]
-    y = 2.2
-    for name, desc in cols:
-        _add_text(s, name, left=0.7, top=y, width=2.4, height=0.35, size=12, bold=True, color=TEXT)
-        _add_text(s, desc, left=3.1, top=y, width=9.5, height=0.35, size=12, color=MUTED)
-        y += 0.36
-
-    _panel(s, left=0.5, top=4.3, width=6.1, height=2.55, fill=PANEL)
-    _add_text(s, "Hybrid retrieval", left=0.7, top=4.4, width=5.7, height=0.4,
-              size=14, bold=True, color=AMBER)
     _bullets(s, [
-        "0.6 · cosine(query, blob)",
-        "0.4 · BM25(query, [TABLE/DESCRIPTION/COLUMN_SEMANTICS])",
-        "Reciprocal-rank fusion → top-N",
-        "Reranks to top-3 cluster choices for the generator",
-    ], left=0.7, top=4.85, width=5.7, height=2.0, size=12)
+        "Compare the question's meaning against every domain (e.g. Student, Discipline, Assessment)",
+        "Combine semantic meaning (60%) with keyword match (40%) — best of both worlds",
+        "Return the top three neighborhoods so the model has options",
+    ], left=0.7, top=2.15, width=12, height=2.0, size=12)
 
-    _panel(s, left=6.85, top=4.3, width=6.1, height=2.55, fill=PANEL)
-    _add_text(s, "Auto sub-clustering (planned, see next-week plan)",
-              left=7.05, top=4.4, width=5.7, height=0.4, size=14, bold=True, color=AMBER)
+    _panel(s, left=0.5, top=4.5, width=12.3, height=2.4, fill=PANEL)
+    _add_text(s, "Step 2 — pick tables inside that neighborhood",
+              left=0.7, top=4.6, width=12, height=0.4, size=14, bold=True, color=ACCENT)
     _bullets(s, [
-        "Domains > 30 tables get Leiden community detection",
-        "Affinity = 0.5·cosine + 0.3·graph + 0.2·name jaccard",
-        "Multi-label tables sub-clustered in BOTH domains",
-        "Hungarian assignment between rebuilds for ID stability",
-    ], left=7.05, top=4.85, width=5.7, height=2.0, size=12)
+        "Inside the chosen neighborhoods, score every table profile against the question",
+        "Pull the small set (typically 3–8 tables) that best matches",
+        "Hand them to the graph layer to figure out how to join them",
+    ], left=0.7, top=5.05, width=12, height=2.0, size=12)
 
-    _footer(s, "Section 3 · Semantic", "embedding/collections.py · embedding/hybrid.py")
-    _notes(s, "FAISS is the no-infra default; Qdrant / OpenSearch ship for prod scale. The factory "
-              "keeps the rest of the platform agnostic — switching stores is a config flip, not "
-              "code change.")
+    _footer(s, "Built — Semantic Schema · 2 of 3", "")
+    _notes(s, "Two-stage search. Without it, accuracy on 1,048 tables drops below useful. With it, "
+              "we routinely route to the correct 3–8 tables for an Ed-Fi question.")
 
-    # ── Slide 11: How graph + semantic cooperate ──────────────────────────
+    # ── Slide 8: Entity resolution ────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "How they cooperate at query time",
-                  "Both layers feed the schema linker, then the generator")
+    _add_title(s, "Resolving real-world terms",
+                  "'Hispanic' is text on a screen — the database speaks codes")
 
-    _panel(s, left=0.5, top=1.6, width=12.3, height=5.2, fill=PANEL)
+    _panel(s, left=0.5, top=1.6, width=12.3, height=2.0, fill=PANEL)
+    _add_text(s, "Worked example",
+              left=0.7, top=1.7, width=12, height=0.4, size=14, bold=True, color=AMBER)
+    _bullets(s, [
+        "Analyst types: 'How many Hispanic students enrolled last year?'",
+        "Database has no field called 'Hispanic' — it stores a foreign key to RaceDescriptor",
+        "We need to: recognize 'Hispanic' is a value, find which descriptor table it lives in, attach the right join",
+    ], left=0.7, top=2.15, width=12, height=1.5, size=12)
 
-    flow = [
-        ("1.", "Question arrives",                        "How many Hispanic students enrolled in Grade 9 last year?", MUTED),
-        ("2.", "Cluster route (semantic)",                "Top-3 (domain, sub-cluster) via hybrid retrieval", ACCENT),
-        ("3.", "Schema link inside cluster (semantic)",   "Pick K tables from cluster's `tables` collection", ACCENT),
-        ("4.", "Steiner over picked tables (graph)",       "Cheapest join tree across ~1048 nodes", ACCENT),
-        ("5.", "Entity resolve (semantic)",               "'Hispanic' → RaceDescriptor.CodeValue + descriptor join chain", AMBER),
-        ("6.", "Generator gets context",                  "M-Schema + JOINs + descriptor filters + 3 gold few-shots", GREEN),
-        ("7.", "Validator + repair loop",                 "sqlglot parse · EXPLAIN · LIMIT 0 (≤3 attempts)", GREEN),
-        ("8.", "Execute",                                  "Engine adapter (PG / MSSQL / SQLite)", GREEN),
-        ("9.", "Vega-Lite + LLM description",             "Auto-pick mark by result shape; describe the answer", GREEN),
-    ]
-    y = 1.85
-    for tag, label, sub, color in flow:
-        _add_text(s, tag, left=0.7, top=y, width=0.5, height=0.3, size=13, bold=True, color=color)
-        _add_text(s, label, left=1.25, top=y, width=4.0, height=0.3, size=12, bold=True, color=TEXT)
-        _add_text(s, sub, left=5.4, top=y, width=7.4, height=0.3, size=12, color=MUTED)
-        y += 0.5
-
-    _footer(s, "Section 3 · Semantic + Graph", "pipeline/orchestrator.py · spec §9")
-    _notes(s, "Read the steps as: semantic narrows the candidate space, graph proves the join is "
-              "actually possible. Without the graph step you'd get sets of tables the LLM can't "
-              "actually join. Without semantic, the graph would have to consider all ~10^6 table "
-              "pairs.")
-
-    # ── Slide 12: Latency budget ──────────────────────────────────────────
-    s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Latency budget at query time",
-                  "p50 / p95 measured on local stack with cached embeddings")
-
+    _panel(s, left=0.5, top=3.8, width=12.3, height=3.1, fill=PANEL)
+    _add_text(s, "Four-tier resolver — fast first, smart last",
+              left=0.7, top=3.9, width=12, height=0.4, size=14, bold=True, color=ACCENT)
     rows = [
-        ("Cluster routing",        "30 ms",  "60 ms",  "Hybrid retrieval ×2 collections"),
-        ("Schema linking",         "40 ms",  "90 ms",  "Tables collection ANN + BM25 fusion"),
-        ("Entity resolve",         "20 ms",  "150 ms", "Tier 1+2 hit ~95% of cases"),
-        ("Steiner",                 "5 ms",   "50 ms",  "K=2 bidirectional / K=3+ KMB"),
-        ("LLM SQL generation",     "1.8 s",  "3.2 s",  "Anthropic Sonnet 4.6 streaming"),
-        ("Validator",               "30 ms",  "120 ms", "sqlglot + EXPLAIN + LIMIT 0"),
-        ("Repair (optional)",       "0 s",    "1.4 s",  "≤3 attempts, fired ~5% of runs"),
-        ("Execute",                 "200 ms", "1.2 s",  "depends on the live DB and query plan"),
-        ("Viz + describe",         "200 ms", "500 ms", "Spec rules + LLM description in parallel"),
+        ("Tier 1 · Bloom filter",  "Is this term even in the database?", "<1 ms"),
+        ("Tier 2 · Fuzzy match",    "Handle typos: 'Hispanc' → 'Hispanic'", "5 ms"),
+        ("Tier 3 · Semantic lookup","Match meaning when spelling differs", "20 ms"),
+        ("Tier 4 · LLM disambiguate","When the value could mean two things, ask the model", "200 ms"),
     ]
-    _panel(s, left=0.5, top=1.6, width=12.3, height=4.2, fill=PANEL)
-    _add_text(s, "Stage",   left=0.7,  top=1.7, width=3.0, height=0.35, size=12, bold=True, color=AMBER)
-    _add_text(s, "p50",     left=4.1,  top=1.7, width=1.0, height=0.35, size=12, bold=True, color=AMBER)
-    _add_text(s, "p95",     left=5.3,  top=1.7, width=1.0, height=0.35, size=12, bold=True, color=AMBER)
-    _add_text(s, "Notes",   left=6.5,  top=1.7, width=6.3, height=0.35, size=12, bold=True, color=AMBER)
-    y = 2.1
-    for stage, p50, p95, note in rows:
-        _add_text(s, stage, left=0.7, top=y, width=3.4, height=0.32, size=11, color=TEXT)
-        _add_text(s, p50,   left=4.1, top=y, width=1.0, height=0.32, size=11, color=GREEN)
-        _add_text(s, p95,   left=5.3, top=y, width=1.0, height=0.32, size=11, color=AMBER)
-        _add_text(s, note,  left=6.5, top=y, width=6.3, height=0.32, size=11, color=MUTED)
-        y += 0.36
+    y = 4.4
+    for tier, what, perf in rows:
+        _add_text(s, tier, left=0.7, top=y, width=4.0, height=0.32, size=12, bold=True, color=TEXT)
+        _add_text(s, what, left=4.8, top=y, width=6.0, height=0.32, size=12, color=MUTED)
+        _add_text(s, perf, left=11.0, top=y, width=1.8, height=0.32, size=12, color=GREEN, align=PP_ALIGN.RIGHT)
+        y += 0.55
 
-    _add_text(s, "End-to-end:  p50 ≈ 4.0 s  ·  p95 ≈ 7.5 s  (LLM dominates)",
-              left=0.5, top=6.0, width=12.3, height=0.4,
-              size=14, bold=True, color=ACCENT, align=PP_ALIGN.CENTER)
-    _add_text(s, "Cache hit on identical question:  ~250 ms total",
-              left=0.5, top=6.4, width=12.3, height=0.4,
-              size=12, color=GREEN, align=PP_ALIGN.CENTER)
+    _footer(s, "Built — Semantic Schema · 3 of 3", "Tier 1+2 handle ~95% of cases")
+    _notes(s, "This is the layer that turns 'plain English' into 'database-correct'. Without it, "
+              "questions like 'last year', 'Grade 9', or 'free-and-reduced lunch' would never "
+              "land on the right rows.")
 
-    _footer(s, "Section 3 · Performance", "Spec §17 budget")
-    _notes(s, "LLM time dominates 80% of latency. We can drive p50 down by routing simple lookups to "
-              "Haiku-class models or by caching SQL for repeated questions. Both are in the "
-              "next-week plan.")
-
-    # ── Slide 13: Plan title ──────────────────────────────────────────────
+    # ── Slide 9: Section divider — Graph ──────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "Section 4", left=0.8, top=2.6, width=11.7, height=0.6,
+    _add_text(s, "What's built · 2 of 2", left=0.8, top=2.5, width=11.7, height=0.5,
               size=18, color=MUTED)
-    _add_text(s, "Plan to May 8", left=0.8, top=3.1, width=11.7, height=1.0,
-              size=44, bold=True, color=ACCENT)
-    _add_text(s, "7 working days · everything that isn't graph or semantic",
-              left=0.8, top=4.1, width=11.7, height=0.5, size=18, color=TEXT)
-    _notes(s, "Today is Apr 30 (Thu). Excluding weekends, that gives us 7 working days through "
-              "Fri May 8. Below is a concrete day-by-day plan, sized to fit.")
+    _add_text(s, "The Foreign-Key Graph", left=0.8, top=3.05, width=11.7, height=1.0,
+              size=44, bold=True, color=GREEN)
+    _add_text(s, "How the platform figures out which JOINs make sense",
+              left=0.8, top=4.05, width=11.7, height=0.5, size=18, color=TEXT)
+    _notes(s, "If semantic gives us 'these 5 tables', graph tells us 'this is the cheapest, "
+              "most natural way to connect them'. Without it, even an LLM that knows Ed-Fi "
+              "well would burn time guessing join paths.")
 
-    # ── Slide 14: Plan timeline ───────────────────────────────────────────
+    # ── Slide 10: What the graph contains ─────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Day-by-day plan", "Apr 30 → May 8 · 7 working days")
+    _add_title(s, "What the graph contains",
+                  "Every Ed-Fi table and every relationship between them, weighted by closeness")
+
+    _panel(s, left=0.5, top=1.6, width=6.0, height=5.2, fill=PANEL)
+    _add_text(s, "By the numbers", left=0.7, top=1.7, width=5.6, height=0.4,
+              size=16, bold=True, color=ACCENT)
+    rows = [
+        ("Tables",               "1,048"),
+        ("Relationships (FKs)",   "~1,900"),
+        ("Domains",                "35"),
+        ("Storage on disk",        "<10 MB"),
+        ("Load time at startup",  "<100 ms"),
+        ("Find best join (k=2)",   "<5 ms"),
+        ("Find best join tree",    "<50 ms typical"),
+    ]
+    y = 2.15
+    for k, v in rows:
+        _add_text(s, k, left=0.7, top=y, width=3.4, height=0.34, size=13, color=MUTED)
+        _add_text(s, v, left=4.1, top=y, width=2.0, height=0.34, size=13, bold=True, color=TEXT)
+        y += 0.55
+
+    _panel(s, left=6.85, top=1.6, width=6.0, height=5.2, fill=PANEL)
+    _add_text(s, "How relationships are weighted",
+              left=7.05, top=1.7, width=5.6, height=0.4, size=16, bold=True, color=AMBER)
+    _bullets(s, [
+        "Inside the same Ed-Fi entity (e.g. Student): cheapest",
+        "Between related entities: more expensive",
+        "Between unrelated domains: most expensive",
+        "Multi-column keys earn a small bonus",
+        "Custom / non-Ed-Fi tables: handled with caution",
+    ], left=7.05, top=2.15, width=5.6, height=4.5, size=13)
+    _add_text(s, "Net effect: joins follow the natural shape of Ed-Fi.",
+              left=7.05, top=6.2, width=5.6, height=0.4, size=12, color=GREEN)
+
+    _footer(s, "Built — Foreign-Key Graph · 1 of 2", "")
+    _notes(s, "Two ideas to leave the room with: the graph is small (10 MB) and fast (millisecond "
+              "responses), and the weighting biases it to keep joins inside the natural Ed-Fi "
+              "boundaries — which is also what a senior analyst would do by hand.")
+
+    # ── Slide 11: Steiner ─────────────────────────────────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "Finding the best join path",
+                  "A classical computer-science problem, solved three ways")
+
+    _panel(s, left=0.5, top=1.6, width=12.3, height=1.9, fill=PANEL)
+    _add_text(s, "The challenge",
+              left=0.7, top=1.7, width=12, height=0.4, size=14, bold=True, color=AMBER)
+    _bullets(s, [
+        "Given the small set of tables semantic has chosen, find the cheapest JOIN tree connecting them",
+        "Optimal solutions are mathematically expensive; we use proven approximations",
+    ], left=0.7, top=2.15, width=12, height=1.5, size=12)
+
+    _panel(s, left=0.5, top=3.7, width=12.3, height=3.2, fill=PANEL)
+    rows = [
+        ("Connecting 2 tables",
+         "Bidirectional shortest-path; returns three alternatives so the model picks the most readable",
+         "<5 ms",  GREEN),
+        ("Connecting 3–8 tables",
+         "Steiner-tree approximation (KMB) — provably within 2× of optimal",
+         "<50 ms", GREEN),
+        ("Edge cases (>8 tables)",
+         "Greedy fallback; rare on real Ed-Fi questions",
+         "<200 ms", AMBER),
+    ]
+    y = 3.8
+    for label, what, perf, color in rows:
+        _add_text(s, label, left=0.7, top=y, width=3.6, height=0.34, size=13, bold=True, color=TEXT)
+        _add_text(s, what, left=4.4, top=y, width=6.7, height=0.7, size=12, color=MUTED)
+        _add_text(s, perf, left=11.2, top=y + 0.3, width=1.7, height=0.34, size=12, color=color, align=PP_ALIGN.RIGHT)
+        y += 1.0
+
+    _footer(s, "Built — Foreign-Key Graph · 2 of 2", "")
+    _notes(s, "Don't dwell on KMB by name. The takeaway is: this is solved, fast, and we have "
+              "fallbacks so the platform never freezes on an unusual question.")
+
+    # ── Slide 12: Section divider — What's next ───────────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_text(s, "What ships next", left=0.8, top=2.4, width=11.7, height=0.6,
+              size=18, color=MUTED)
+    _add_text(s, "Five workstreams to demo", left=0.8, top=2.95, width=11.7, height=1.0,
+              size=42, bold=True, color=AMBER)
+    _add_text(s, "Question pipeline · Validation · Charts · UI · Hardening",
+              left=0.8, top=3.95, width=11.7, height=0.5, size=18, color=TEXT)
+    _add_text(s, "7 working days · Apr 30 → Fri May 8 · weekend-free",
+              left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
+
+    # ── Slide 13: Workstream catalog ──────────────────────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "Five workstreams in detail", "What each one means for the demo")
+
+    items = [
+        ("1.  Question → SQL pipeline",
+         "The end-to-end orchestrator that takes an English question, calls the semantic + graph "
+         "layers, and emits SQL grounded in real columns."),
+        ("2.  Validation & repair",
+         "Catch broken SQL before it runs (parse, plan check, dry-execute). Auto-fix the common "
+         "failure modes — typos, missing joins, wrong column names — up to three retries."),
+        ("3.  Charts & descriptions",
+         "Pick the right chart automatically based on the result shape. Generate a one-paragraph "
+         "summary in plain English so the answer reads itself."),
+        ("4.  Web UI · Settings · Eval",
+         "Browser experience for analysts (Query, Chat, Tables); operator controls for connecting "
+         "databases and LLMs; an Eval Dashboard tracking accuracy across builds."),
+        ("5.  Hardening & demo",
+         "Multi-provider readiness, observability, recorded demo on a clean Windows machine; "
+         "v0.8 release tag."),
+    ]
+    _panel(s, left=0.5, top=1.6, width=12.3, height=5.3, fill=PANEL)
+    y = 1.8
+    for label, what in items:
+        _add_text(s, label, left=0.7, top=y, width=12, height=0.35, size=14, bold=True, color=ACCENT)
+        _add_text(s, what, left=0.9, top=y + 0.32, width=11.8, height=0.7, size=12, color=MUTED)
+        y += 1.05
+
+    _footer(s, "Plan · Section 4", "")
+    _notes(s, "Each workstream produces a tangible thing the client can see at the demo. The order "
+              "is dependency-driven: pipeline depends on graph + semantic; UI depends on pipeline; "
+              "hardening goes last.")
+
+    # ── Slide 14: Day-by-day plan ─────────────────────────────────────────
+    s = prs.slides.add_slide(blank); _slide_bg(s)
+    _add_title(s, "Day-by-day plan",
+                  "Apr 30 → Fri May 8 · 7 working days · weekends excluded")
 
     days = [
-        ("Thu Apr 30", "Demo SQLite + auto sub-cluster spike",
-         ["Build sample_demo.sqlite (~50 rows, 6 tables) so demo runs zero-infra",
-          "Spike Leiden sub-clustering on 4 oversize Ed-Fi domains",
-          "Verify P7 reflection on Northridge (1084-table case)"]),
-        ("Fri May 1",  "Auto sub-clustering land + cluster-ID stability",
-         ["Productionize Leiden + LLM auto-naming (ship behind feature flag)",
-          "Hungarian assignment between rebuilds (>70% overlap → preserve ID)",
-          "Update embedding/collections.py to populate `clusters` at sub-cluster granularity"]),
-        ("Mon May 4",  "Eval + observability hardening",
-         ["Add 30 more gold queries against Northridge (currently 20)",
-          "OpenTelemetry spans per pipeline stage; Grafana dashboards JSON",
-          "Wire CI nightly eval; gate >2pp regression"]),
-        ("Tue May 5",  "Provider matrix + reviewer fixes",
-         ["H1 fix: Postgres/MSSQL ALTER TABLE for legacy `dialect` column",
-          "H2 fix: redact passwords in /admin/test_metadata_db error strings",
-          "M2 fix: switch _metadata_sa_url to sqlalchemy.engine.URL.create()"]),
-        ("Wed May 6",  "Frontend polish + docs",
-         ["Cluster Manager page (drag tables between clusters, react-flow)",
-          "Eval Dashboard page (per-build metrics, regression alerts)",
-          "Operator runbook + provider-swap guide in /docs"]),
-        ("Thu May 7",  "Hardening pass + k8s manifests",
-         ["k8s manifests: backend, Celery, Redis, Qdrant, Postgres",
-          "Vector-store Parquet export round-trip test (spec §10.4)",
-          "Per-user quota + model-pin alerts (spec §16 risks)"]),
-        ("Fri May 8",  "Demo prep + final regression",
-         ["End-to-end run on a clean machine (Mac + Windows)",
-          "Recorded demo: provider switch · onboarding flow · NL → SQL → chart",
-          "Cut v0.8 tag · push final docs"]),
+        ("Thu Apr 30",
+         "Pipeline scaffold + auto-grouping spike",
+         ["Wire question → semantic search → graph join into a single orchestrator",
+          "Spike Leiden auto-grouping inside oversize domains for sharper routing",
+          "Verify the platform handles real-world databases that have non-Ed-Fi tables"]),
+        ("Fri May 1",
+         "Pipeline land + retrieval polish",
+         ["Productionize the orchestrator with structured logs at every stage",
+          "Add proven-query retrieval (top-3 examples passed to the SQL generator)",
+          "First end-to-end NL → SQL → rows on the demo SQLite database"]),
+        ("Mon May 4",
+         "Validation & repair loop",
+         ["Parse-check, plan-check, and dry-execute every generated query",
+          "Three-attempt repair loop for typical failure modes",
+          "Expand the gold-query test suite to 50 questions; run nightly"]),
+        ("Tue May 5",
+         "Charts, descriptions, and Settings UI",
+         ["Auto-pick chart type from result shape (Vega-Lite spec generation)",
+          "Plain-English answer summary running in parallel with chart render",
+          "Settings page editable end-to-end — pick database, LLM, embedding via UI"]),
+        ("Wed May 6",
+         "Eval dashboard + cluster manager",
+         ["Eval Dashboard page: per-build metrics, regression alerts",
+          "Cluster Manager page: drag tables between groups, trigger rebuild",
+          "Operator runbook + provider-swap guide"]),
+        ("Thu May 7",
+         "Hardening + multi-provider polish",
+         ["Multi-provider matrix tested across all combinations",
+          "Performance pass — caching, observability dashboards",
+          "Two security fixes flagged in earlier review"]),
+        ("Fri May 8",
+         "Demo prep + release",
+         ["End-to-end run on a clean Mac and Windows machine",
+          "Recorded demo: connect database → ask question → see chart + summary",
+          "v0.8 release tag pushed; final docs"]),
     ]
 
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.5, fill=PANEL)
     y = 1.75
     for day, theme, tasks in days:
-        _add_text(s, day, left=0.7, top=y, width=1.6, height=0.3,
+        _add_text(s, day, left=0.7, top=y, width=1.7, height=0.3,
                   size=12, bold=True, color=ACCENT)
-        _add_text(s, theme, left=2.4, top=y, width=10.4, height=0.3,
+        _add_text(s, theme, left=2.5, top=y, width=10.3, height=0.3,
                   size=12, bold=True, color=TEXT)
         for t in tasks:
-            y += 0.22
-            _add_text(s, "•  " + t, left=2.4, top=y, width=10.4, height=0.25,
+            y += 0.21
+            _add_text(s, "•  " + t, left=2.5, top=y, width=10.3, height=0.25,
                       size=10, color=MUTED)
-        y += 0.32
+        y += 0.30
 
-    _footer(s, "Section 4 · Plan", "All weekend-free; revisit Mon if Fri slips")
-    _notes(s, "I've front-loaded the demo SQLite and sub-clustering because they're prerequisites "
-              "for showing the platform off. If sub-clustering Leiden tuning blows up, I'll fall "
-              "back to per-domain routing and ship sub-clustering in v0.9.")
+    _footer(s, "Plan · Section 4", "Buffer day not built in — risks below")
+    _notes(s, "Front-loaded the pipeline because it unblocks UI and eval. Auto-grouping is a spike — "
+              "if it doesn't tune well, we ship per-domain routing for v0.8 and revisit.")
 
-    # ── Slide 15: Risks & open questions ──────────────────────────────────
+    # ── Slide 15: Risks ───────────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_title(s, "Risks & open questions", "What could derail the May 8 target")
+    _add_title(s, "Risks & how we'll handle them",
+                  "Known unknowns flagged early; mitigations in the plan above")
 
     risks = [
-        ("Sub-cluster tuning",
-         "Leiden hyperparameters require iteration; 8-20 tables/cluster is the spec target.",
-         "Fallback: per-domain routing, sub-cluster as v0.9.",
+        ("Auto-grouping accuracy",
+         "Tuning the algorithm well takes iteration; we may not have it perfect by Friday.",
+         "Fallback to per-domain routing for v0.8 — already proven; auto-grouping ships in v0.9.",
          AMBER),
-        ("Reviewer H1: legacy DB migration",
-         "Existing Postgres/MSSQL deployments don't auto-add the `dialect` column.",
-         "ALTER TABLE on first ensure_schema(); 1-day fix planned for Tue.",
+        ("Two flagged security fixes",
+         "Earlier code review flagged a credential-exposure path and a legacy-DB migration gap.",
+         "Both have ~half-day fixes scoped for Tuesday May 5.",
          RED),
-        ("Reviewer H2: password leak",
-         "/admin/test_metadata_db echoes raw SA exception which can include the DSN.",
-         "URL.render_as_string(hide_password=True); 0.5-day fix.",
-         RED),
-        ("SQLite multi-user concurrency",
-         "Default SQLite isn't WAL — `database is locked` under multi-writer load.",
-         "Document as single-user only OR add WAL pragma via event listener.",
+        ("Concurrent users on SQLite metadata",
+         "SQLite serializes writes; multi-user demos may hit lock contention.",
+         "Documented as single-user demo; multi-user uses Postgres metadata (already supported).",
          AMBER),
-        ("Demo on real Northridge",
-         "Northridge restore takes ~30 min and needs MSSQL container.",
-         "Cache the restored DB image; ship demo SQLite as primary.",
+        ("Live demo connectivity",
+         "Recorded demos are safer than live demos for client meetings.",
+         "Pre-record the full flow Friday morning; show recording with live Q&A.",
          GREEN),
-        ("CI matrix on real Postgres / MSSQL",
-         "All current tests run on SQLite; native UUID/JSONB paths unverified.",
-         "GitHub Actions matrix in Wed/Thu work.",
-         AMBER),
     ]
-
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.4, fill=PANEL)
-    y = 1.75
+    y = 1.8
     for label, what, plan, color in risks:
-        _add_text(s, "●", left=0.7, top=y, width=0.3, height=0.3, size=18, bold=True, color=color)
-        _add_text(s, label, left=1.1, top=y, width=11.7, height=0.3, size=13, bold=True, color=TEXT)
-        _add_text(s, what,  left=1.1, top=y + 0.30, width=11.7, height=0.3, size=11, color=MUTED)
-        _add_text(s, plan,  left=1.1, top=y + 0.55, width=11.7, height=0.3, size=11, color=ACCENT)
-        y += 0.92
+        _add_text(s, "●", left=0.7, top=y, width=0.3, height=0.3, size=20, bold=True, color=color)
+        _add_text(s, label, left=1.1, top=y, width=11.7, height=0.3, size=14, bold=True, color=TEXT)
+        _add_text(s, "Risk: "  + what, left=1.1, top=y + 0.32, width=11.7, height=0.32, size=11, color=MUTED)
+        _add_text(s, "Plan: "  + plan, left=1.1, top=y + 0.62, width=11.7, height=0.32, size=11, color=ACCENT)
+        y += 1.27
 
-    _footer(s, "Section 4 · Risks", "Two H-severity flags must clear before demo")
-    _notes(s, "The two reviewer H flags are the merge-blockers. Everything else is a quality "
-              "improvement that doesn't block the demo target.")
+    _footer(s, "Risk register", "")
+    _notes(s, "We're not promising perfection by Friday. We are promising a working end-to-end "
+              "demo on a clean machine, with the foundation already proven. The flagged security "
+              "items are scoped fixes, not unknowns.")
 
-    # ── Slide 16: Wrap-up ─────────────────────────────────────────────────
+    # ── Slide 16: What you'll see ─────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
-    _add_text(s, "What we have", left=0.8, top=1.4, width=11.7, height=0.6,
-              size=22, bold=True, color=ACCENT)
-    _bullets(s, [
-        "End-to-end NL → SQL pipeline on Ed-Fi (live, cached, multi-provider)",
-        "Graph layer: ~1900 FK edges, APSP in <100ms, Steiner sub-50ms",
-        "Semantic layer: per-table embeddings + cluster routing + entity resolve",
-        "Multi-dialect (MSSQL/PG/SQLite) for both target_db and metadata_db",
-        "Per-provider artifact isolation; UI for provider switching",
-        "Bootable from empty repo with onboarding banner + Rebuild orchestrator",
-        "215 tests passing; Windows-clean (utf-8 + reflection-aware catalog)",
-    ], left=0.8, top=2.0, width=11.7, height=2.5, size=14)
+    _add_text(s, "What you'll see at the demo", left=0.8, top=1.4, width=11.7, height=0.6,
+              size=24, bold=True, color=ACCENT)
 
-    _add_text(s, "What lands by Fri May 8", left=0.8, top=4.5, width=11.7, height=0.6,
-              size=22, bold=True, color=AMBER)
+    _panel(s, left=0.5, top=2.1, width=12.3, height=4.6, fill=PANEL)
     _bullets(s, [
-        "Auto sub-clustering (Leiden + LLM auto-naming)",
-        "Demo SQLite with real Ed-Fi-shaped data",
-        "30 more gold queries + nightly CI eval gate",
-        "Reviewer H1 + H2 fixes (legacy migration, password leak)",
-        "Cluster Manager + Eval Dashboard pages",
-        "k8s manifests; provider × consumer matrix CI",
-        "Recorded demo on a clean Windows machine",
-    ], left=0.8, top=5.05, width=11.7, height=2.0, size=14)
+        "Connect any Ed-Fi-shaped database from a browser — no code, no config files",
+        "Ask plain-English questions and watch the answer arrive in seconds",
+        "See the SQL the platform generated, color-coded against the catalog",
+        "Look at the auto-picked chart and read the written summary",
+        "Approve a query — and watch the platform get smarter for the next question like it",
+        "Switch from one database to another mid-session and see results refresh automatically",
+        "Open the Eval Dashboard to see how accuracy is trending across builds",
+    ], left=0.7, top=2.25, width=11.9, height=4.4, size=14, color=TEXT)
 
-    _footer(s, "Wrap", "Questions?")
-    _notes(s, "Headline: graph + semantic are mature and proven. The May 8 work is polish, "
-              "additional coverage, and the reviewer's two H-severity fixes. Everything stays "
-              "shipped behind feature flags so partial completions don't break the demo path.")
+    _add_text(s, "Demo machine: clean Windows install · no prior setup", left=0.5, top=6.85,
+              width=12.3, height=0.4, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+
+    _notes(s, "End on the demo. The 7 specific things on this slide are what you'll watch. "
+              "Each bullet is gated on a workstream above. We sequence them so even if Friday "
+              "ends with the last item half-baked, the first six are still demo-ready.")
 
     # ── Save ──────────────────────────────────────────────────────────────
     out = Path(__file__).resolve().parent / "architecture_deck.pptx"
