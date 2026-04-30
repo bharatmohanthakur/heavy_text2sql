@@ -191,7 +191,7 @@ def build():
     # ── Slide 3: Status snapshot ──────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
     _add_title(s, "Status: early foundation in place, most work in flight",
-                  "Cluster-creation is the only complete workstream today; everything else is in progress for the 7-day push to demo")
+                  "Cluster-creation is the only complete workstream today; everything else is in progress for the 6-day push to demo")
 
     rows = [
         ("Cluster Creation",         "Done",        GREEN,
@@ -221,11 +221,11 @@ def build():
                   size=11, color=MUTED)
         y += 0.62
 
-    _footer(s, "Status snapshot", "1 of 8 complete · 7 working days to demo")
+    _footer(s, "Status snapshot", "1 of 8 complete · 6 working days to demo")
     _notes(s, "This single slide is the headline. Cluster Creation is the only workstream that's "
               "functionally complete; the semantic schema and foreign-key graph have scaffolding "
               "but are still being tuned, and everything else is integration work in flight. "
-              "That's why the 7-working-day plan is intentionally aggressive but bounded.")
+              "That's why the 6-working-day plan is intentionally aggressive but bounded.")
 
     # ── Slide 4: System map ───────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
@@ -259,7 +259,7 @@ def build():
                       size=11, color=TEXT)
         y += 0.95
 
-    _add_text(s, "Green = complete today  ·  Amber = in progress, targeted for the 7-day push",
+    _add_text(s, "Green = complete today  ·  Amber = in progress, targeted for the 6-day push",
               left=0.5, top=7.05, width=12.3, height=0.3,
               size=11, color=MUTED, align=PP_ALIGN.CENTER)
     _notes(s, "Walk top-to-bottom. Cluster Creation is the only green row — the rest are working "
@@ -330,7 +330,7 @@ def build():
               left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
     _notes(s, "If we just gave the LLM 1,048 tables and asked it to pick, accuracy would collapse "
               "and cost would explode. The semantic layer is the search index that fixes that. "
-              "Today: per-table profiles + embeddings work end-to-end on the demo DB; next 7 days: "
+              "Today: per-table profiles + embeddings work end-to-end on the demo DB; next 6 working days: "
               "tune coverage on the full 1,048-table model and harden the routing thresholds.")
 
     # ── Slide 6: Per-table understanding ──────────────────────────────────
@@ -460,7 +460,7 @@ def build():
     _notes(s, "If semantic gives us 'these 5 tables', graph tells us 'this is the cheapest, "
               "most natural way to connect them'. Without it, even an LLM that knows Ed-Fi "
               "well would burn time guessing join paths. Today: shortest-path + Steiner-tree "
-              "scaffolding running on the demo DB. Next 7 days: tune weights on the full Ed-Fi "
+              "scaffolding running on the demo DB. Next 6 working days: tune weights on the full Ed-Fi"
               "model and verify behavior on the unknown-table reflection path.")
 
     # ── Slide 10: What the graph contains ─────────────────────────────────
@@ -548,7 +548,7 @@ def build():
               size=42, bold=True, color=AMBER)
     _add_text(s, "Question pipeline · Validation · Charts · UI · Hardening",
               left=0.8, top=3.95, width=11.7, height=0.5, size=18, color=TEXT)
-    _add_text(s, "7 working days · Apr 30 → Fri May 8 · weekend-free",
+    _add_text(s, "6 working days · Apr 30 → Fri May 8 · May 1 holiday + weekends excluded",
               left=0.8, top=4.55, width=11.7, height=0.4, size=14, color=MUTED)
 
     # ── Slide 13: Workstream catalog ──────────────────────────────────────
@@ -587,7 +587,7 @@ def build():
     # ── Slide 14: Day-by-day plan ─────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
     _add_title(s, "Day-by-day plan",
-                  "Apr 30 → Fri May 8 · 7 working days · weekends excluded")
+                  "Apr 30 → Fri May 8 · 6 working days · May 1 holiday + weekends excluded")
 
     days = [
         ("Thu Apr 30",
@@ -595,16 +595,12 @@ def build():
          ["Build per-table semantic blobs across the full 1,048-table model (today only the demo DB is covered)",
           "Tune cluster + table routing thresholds; lock the top-3 retrieval mix",
           "Wire entity-resolver tiers 1–2 (Bloom + fuzzy) end-to-end"]),
-        ("Fri May 1",
-         "Foreign-key graph — finish weights + Steiner integration",
+        ("Mon May 4",
+         "Foreign-key graph + first end-to-end pipeline run",
          ["Apply weighted edges across the full Ed-Fi graph; verify <10 MB load + <100 ms startup",
           "Land bidirectional Dijkstra (k=2) + KMB Steiner (k=3–8) behind a single solver entrypoint",
-          "Integrate with the new unknown-table reflection path so non-Ed-Fi tables join cleanly"]),
-        ("Mon May 4",
-         "Question → SQL pipeline — first end-to-end run",
-         ["Wire question → semantic routing → graph join → SQL generator into one orchestrator",
-          "Add proven-query retrieval (top-3 examples passed to the SQL generator)",
-          "First green NL → SQL → rows trace on the demo SQLite DB; structured logs at every stage"]),
+          "Wire question → semantic routing → graph join → SQL generator into one orchestrator",
+          "First green NL → SQL → rows trace on the demo SQLite DB"]),
         ("Tue May 5",
          "Validation & repair loop + Tier-3/4 entity resolution",
          ["Parse-check, plan-check, and dry-execute every generated query",
