@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -21,8 +22,16 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase
+
+
+# Cross-dialect text-array type: PG gets a real `text[]`; everything
+# else (sqlite, mssql) gets a JSON-encoded list. The Python-side value
+# is always `list[str]`, so callers don't care which dialect rendered it.
+_TextArray = JSON().with_variant(PG_ARRAY(Text), "postgresql")
+_UuidColumn = sa.Uuid(as_uuid=True).with_variant(PG_UUID(as_uuid=True), "postgresql")
 
 
 class _Base(DeclarativeBase):
@@ -34,12 +43,12 @@ class GoldSqlRow(_Base):
 
     __tablename__ = "gold_sql"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(_UuidColumn, primary_key=True, default=uuid.uuid4)
     nl_question = Column(Text, nullable=False)
     sql_text = Column(Text, nullable=False)
     sql_ast_flat = Column(Text, nullable=False, default="")
-    tables_used = Column(ARRAY(Text), nullable=False, default=list)
-    domains_used = Column(ARRAY(Text), nullable=False, default=list)
+    tables_used = Column(_TextArray, nullable=False, default=list)
+    domains_used = Column(_TextArray, nullable=False, default=list)
 
     # Embeddings as JSON arrays. Switch to pgvector when corpus > a few thousand.
     embedding_nl = Column(JSON, nullable=False, default=list)
@@ -68,7 +77,7 @@ class GoldSqlRow(_Base):
     # back to its origin so the curator can see the lineage.
     target_provider = Column(String(128), nullable=False, default="")
     dialect = Column(String(32), nullable=False, default="")
-    source_gold_id = Column(UUID(as_uuid=True), nullable=True)
+    source_gold_id = Column(_UuidColumn, nullable=True)
 
 
 @dataclass
