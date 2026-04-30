@@ -591,40 +591,40 @@ def build():
 
     days = [
         ("Thu Apr 30",
-         "Pipeline scaffold + auto-grouping spike",
-         ["Wire question → semantic search → graph join into a single orchestrator",
-          "Spike Leiden auto-grouping inside oversize domains for sharper routing",
-          "Verify the platform handles real-world databases that have non-Ed-Fi tables"]),
+         "Semantic schema — finish per-table profiles + tune routing",
+         ["Build per-table semantic blobs across the full 1,048-table model (today only the demo DB is covered)",
+          "Tune cluster + table routing thresholds; lock the top-3 retrieval mix",
+          "Wire entity-resolver tiers 1–2 (Bloom + fuzzy) end-to-end"]),
         ("Fri May 1",
-         "Pipeline land + retrieval polish",
-         ["Productionize the orchestrator with structured logs at every stage",
-          "Add proven-query retrieval (top-3 examples passed to the SQL generator)",
-          "First end-to-end NL → SQL → rows on the demo SQLite database"]),
+         "Foreign-key graph — finish weights + Steiner integration",
+         ["Apply weighted edges across the full Ed-Fi graph; verify <10 MB load + <100 ms startup",
+          "Land bidirectional Dijkstra (k=2) + KMB Steiner (k=3–8) behind a single solver entrypoint",
+          "Integrate with the new unknown-table reflection path so non-Ed-Fi tables join cleanly"]),
         ("Mon May 4",
-         "Validation & repair loop",
+         "Question → SQL pipeline — first end-to-end run",
+         ["Wire question → semantic routing → graph join → SQL generator into one orchestrator",
+          "Add proven-query retrieval (top-3 examples passed to the SQL generator)",
+          "First green NL → SQL → rows trace on the demo SQLite DB; structured logs at every stage"]),
+        ("Tue May 5",
+         "Validation & repair loop + Tier-3/4 entity resolution",
          ["Parse-check, plan-check, and dry-execute every generated query",
           "Three-attempt repair loop for typical failure modes",
-          "Expand the gold-query test suite to 50 questions; run nightly"]),
-        ("Tue May 5",
-         "Charts, descriptions, and Settings UI",
+          "Land semantic + LLM disambiguation tiers; expand gold-query suite to 50 questions"]),
+        ("Wed May 6",
+         "Charts, descriptions, Settings UI editable end-to-end",
          ["Auto-pick chart type from result shape (Vega-Lite spec generation)",
           "Plain-English answer summary running in parallel with chart render",
-          "Settings page editable end-to-end — pick database, LLM, embedding via UI"]),
-        ("Wed May 6",
-         "Eval dashboard + cluster manager",
-         ["Eval Dashboard page: per-build metrics, regression alerts",
-          "Cluster Manager page: drag tables between groups, trigger rebuild",
-          "Operator runbook + provider-swap guide"]),
+          "Settings page fully editable — pick database, LLM, embedding via UI; ship onboarding flow"]),
         ("Thu May 7",
-         "Hardening + multi-provider polish",
-         ["Multi-provider matrix tested across all combinations",
-          "Performance pass — caching, observability dashboards",
-          "Two security fixes flagged in earlier review"]),
+         "Eval dashboard + cluster manager UI + hardening",
+         ["Eval Dashboard page: per-build metrics, regression alerts",
+          "Cluster Manager page: drag tables between groups, trigger rebuild from UI",
+          "Multi-provider matrix; observability dashboards; two security fixes flagged in review"]),
         ("Fri May 8",
          "Demo prep + release",
-         ["End-to-end run on a clean Mac and Windows machine",
-          "Recorded demo: connect database → ask question → see chart + summary",
-          "v0.8 release tag pushed; final docs"]),
+         ["End-to-end dry-run on a clean Mac and Windows machine",
+          "Recorded demo: connect DB → ask question → see SQL + rows + chart + summary",
+          "v0.8 release tag + operator runbook + provider-swap guide"]),
     ]
 
     _panel(s, left=0.5, top=1.6, width=12.3, height=5.5, fill=PANEL)
@@ -641,8 +641,10 @@ def build():
         y += 0.30
 
     _footer(s, "Plan · Section 4", "Buffer day not built in — risks below")
-    _notes(s, "Front-loaded the pipeline because it unblocks UI and eval. Auto-grouping is a spike — "
-              "if it doesn't tune well, we ship per-domain routing for v0.8 and revisit.")
+    _notes(s, "Reordered to match what's actually unfinished: the first two days finish the "
+              "semantic and graph layers (the deck calls those 'in progress' for a reason), Mon "
+              "lights up the end-to-end pipeline, Tue–Wed land validation + UI, Thu hardens, Fri "
+              "is demo. No buffer — risks slide flags fallbacks if any one day slips.")
 
     # ── Slide 15: Risks ───────────────────────────────────────────────────
     s = prs.slides.add_slide(blank); _slide_bg(s)
