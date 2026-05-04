@@ -339,11 +339,19 @@ def load_config(
     #   1. data/artifacts/runtime_secrets.json (UI-managed)
     #   2. .env file
     #   3. process env
-    env: dict[str, str] = {
+    file_env: dict[str, str] = {
         **_load_runtime_secrets(),
         **_load_env_file(env_path),
-        **os.environ,
     }
+    env: dict[str, str] = {**file_env, **os.environ}
+
+    # Export .env / runtime_secrets values into os.environ so provider
+    # constructors that read os.environ directly (LLM api_key_env,
+    # target_db password_env, etc.) can find them without the operator
+    # having to `source .env` first. Real process-env values still win
+    # — we only fill in keys that aren't already set.
+    for k, v in file_env.items():
+        os.environ.setdefault(k, v)
 
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if overlay_p.exists():
