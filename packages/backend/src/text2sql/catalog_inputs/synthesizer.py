@@ -41,12 +41,6 @@ log = logging.getLogger(__name__)
 # Heuristic flag detection that doesn't require Ed-Fi-specific knowledge.
 # Operators may name conventions differently; these are deliberately mild.
 
-def _is_descriptor_table(name: str) -> bool:
-    """A table whose name ends in 'Descriptor' is treated as a lookup
-    table per Ed-Fi convention. Operators outside Ed-Fi can override
-    via Q8's domain_overrides.yaml in a later step."""
-    return name.endswith("Descriptor")
-
 
 def _is_association_table(fk_edges_for_this_table: int) -> bool:
     """A table that's the parent (source) side of ≥2 FK edges is an
@@ -82,6 +76,7 @@ def synthesize_metadata(
     inputs: CatalogInputs,
     *,
     sql_engine: SqlEngine | None = None,
+    descriptor_config=None,
 ) -> tuple[list[TableMetadata], list[TableClassification]]:
     """Build (TableMetadata list, TableClassification list) from
     CatalogInputs. Same fqn ordering as `inputs.tables_in_order`.
@@ -100,7 +95,12 @@ def synthesize_metadata(
     # Imported here to avoid a circular-import chain through the
     # catalog_builder module at package load time.
     from text2sql.table_catalog.catalog_builder import _reflect_pk
+    from text2sql.table_catalog.descriptor_config import (
+        DescriptorConfig,
+        is_flagged as _desc_is_flagged,
+    )
 
+    cfg = descriptor_config if descriptor_config is not None else DescriptorConfig()
     columns_by_table = inputs.columns_by_table()
 
     # Pre-compute neighbor sets once. parent_neighbors[fqn] = tables this
@@ -129,7 +129,7 @@ def synthesize_metadata(
         cols = columns_by_table.get(fqn) or []
         column_names = tuple(c.column for c in cols)
 
-        is_descriptor = _is_descriptor_table(table)
+        is_descriptor = _desc_is_flagged(cfg, fqn, table)
         is_association = _is_association_table(out_edge_count.get(fqn, 0))
         # Without Ed-Fi spec we have no notion of "extension" — every
         # table the operator listed is treated as in-scope, and tables
@@ -182,6 +182,7 @@ def synthesize_inputs_for_builder(
     inputs: CatalogInputs,
     *,
     sql_engine: SqlEngine | None = None,
+    descriptor_config=None,
 ) -> tuple[CatalogIndex, list[TableClassification], _StubManifest]:
     """One-call helper: produce the trio `build_table_catalog()` needs.
     Useful for tests and the new `text2sql ingest-csvs` CLI entry point.
@@ -189,8 +190,15 @@ def synthesize_inputs_for_builder(
     Pass `sql_engine` to reflect primary keys from the live DB at
     synthesis time (one round trip per table, vs. having
     `build_table_catalog()` do it later).
+
+    Pass `descriptor_config` (a `DescriptorConfig`) to override the
+    default Ed-Fi-shaped descriptor flagging — required for non-Ed-Fi
+    schemas that have `*Descriptor`-named tables but no two-table
+    descriptor system.
     """
-    metas, cls = synthesize_metadata(inputs, sql_engine=sql_engine)
+    metas, cls = synthesize_metadata(
+        inputs, sql_engine=sql_engine, descriptor_config=descriptor_config,
+    )
     idx = CatalogIndex(tables=metas)
     idx.by_fqn = {m.fqn: m for m in metas}
     for m in metas:

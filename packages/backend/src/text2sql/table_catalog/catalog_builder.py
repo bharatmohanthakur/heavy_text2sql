@@ -427,6 +427,7 @@ def build_table_catalog(
     only_fqns: set[str] | None = None,
     provider_name: str = "",
     include_unknown_tables: bool = True,
+    descriptor_config=None,
 ) -> TableCatalog:
     """Build the catalog. One record per table.
 
@@ -437,6 +438,11 @@ def build_table_catalog(
     user is actually querying — e.g., a 1084-table DB with 36 custom
     tables that aren't in the Ed-Fi standard model.
     """
+    from text2sql.table_catalog.descriptor_config import (
+        DescriptorConfig,
+        master_in_catalog,
+    )
+
     cls_by_fqn = {c.fqn: c for c in classifications}
     raw_entities = _entity_lookup(manifest.artifacts)
     by_fqn_meta = catalog_index.by_fqn
@@ -446,6 +452,13 @@ def build_table_catalog(
         if only_fqns is not None
         else list(by_fqn_meta.values())
     )
+
+    # Resolve the operator's descriptor layer once. When the master
+    # table isn't actually in the catalog (the common non-Ed-Fi case),
+    # we treat the layer as disabled — descriptor children are sampled
+    # like ordinary tables and no master-pull runs.
+    desc_cfg = descriptor_config if descriptor_config is not None else DescriptorConfig()
+    descriptor_layer_active = master_in_catalog(desc_cfg, by_fqn_meta.keys())
 
     entries: list[TableEntry] = []
     samples_for_llm: list[TableSampleData] = []
@@ -482,12 +495,15 @@ def build_table_catalog(
                 sample_rows = _sample_rows(
                     sql_engine, meta.schema, meta.name, sample_row_count
                 )
-                # Skip per-column sampling of the master Descriptor table —
-                # we'll fan its codes out to the child descriptor entries below.
-                # Also skip child *Descriptor tables: they only hold an opaque
-                # integer ID (FK to descriptor) which is useless for entity
-                # resolution.
-                if meta.fqn == DESCRIPTOR_MASTER_FQN or meta.is_descriptor:
+                # Skip per-column sampling of the descriptor master and its
+                # children ONLY when the descriptor layer is actually active
+                # for this build (master table present + config enabled).
+                # Without that guard, operators with `*Descriptor`-named
+                # tables but no master end up with empty sample_values,
+                # silently breaking entity resolution. See
+                # text2sql.table_catalog.descriptor_config for the contract.
+                is_master = descriptor_layer_active and meta.fqn == desc_cfg.master_fqn
+                if descriptor_layer_active and (is_master or meta.is_descriptor):
                     pass
                 else:
                     for col in columns:
@@ -645,8 +661,8 @@ def build_table_catalog(
     # downstream layers WHICH child descriptor table the value belongs to,
     # which in turn tells the schema linker what FK column to filter on.
     descriptor_codes: list[DescriptorCode] = []
-    if sql_engine is not None and enrich_values:
-        descriptor_codes = _pull_descriptor_codes(sql_engine, entries)
+    if sql_engine is not None and enrich_values and descriptor_layer_active:
+        descriptor_codes = _pull_descriptor_codes(sql_engine, entries, desc_cfg)
 
     catalog = TableCatalog(
         data_standard_version=manifest.data_standard_version,
@@ -663,50 +679,80 @@ def build_table_catalog(
 
 
 def _pull_descriptor_codes(
-    sql_engine: SqlEngine, entries: list[TableEntry]
+    sql_engine: SqlEngine,
+    entries: list[TableEntry],
+    cfg=None,
 ) -> list["DescriptorCode"]:
-    """Pull every (codevalue, namespace) pair from edfi.descriptor and resolve
-    each to its child descriptor table's fqn.
+    """Pull every (code_value, namespace) row from the descriptor master
+    table and resolve each to its child descriptor table's fqn.
 
-    Returns [] if edfi.descriptor isn't reachable on this engine.
+    Operator-configurable via `DescriptorConfig` — see
+    text2sql.table_catalog.descriptor_config. With the default config
+    this matches Ed-Fi's `edfi.Descriptor` shape verbatim.
     """
-    qual = _qual(sql_engine, "edfi", "Descriptor")
-    sql = (
-        f"SELECT {sql_engine.quote_identifier('DescriptorId')} AS descriptor_id, "
-        f"{sql_engine.quote_identifier('CodeValue')} AS code_value, "
-        f"{sql_engine.quote_identifier('ShortDescription')} AS short_description, "
-        f"{sql_engine.quote_identifier('Description')} AS description, "
-        f"{sql_engine.quote_identifier('Namespace')} AS namespace "
-        f"FROM {qual}"
-    )
+    from text2sql.table_catalog.descriptor_config import DescriptorConfig
+
+    cfg = cfg if cfg is not None else DescriptorConfig()
+    if not cfg.enabled:
+        return []
+
+    schema, _, table = (cfg.master_fqn or "").partition(".")
+    if not table:
+        return []
+    qual = _qual(sql_engine, schema, table)
+    cols = [
+        f"{sql_engine.quote_identifier(cfg.id_column)} AS descriptor_id",
+        f"{sql_engine.quote_identifier(cfg.code_column)} AS code_value",
+        f"{sql_engine.quote_identifier(cfg.short_description_column)} AS short_description",
+        f"{sql_engine.quote_identifier(cfg.description_column)} AS description",
+        f"{sql_engine.quote_identifier(cfg.namespace_column)} AS namespace",
+    ]
+    sql = f"SELECT {', '.join(cols)} FROM {qual}"
     try:
         rows = sql_engine.execute(sql)
     except Exception as e:
-        log.debug("descriptor pull failed: %s", e)
+        log.debug("descriptor pull failed (master=%s): %s", cfg.master_fqn, e)
         return []
 
-    # Map {child_fqn_lower → child_fqn_with_proper_case} so we can resolve
-    # namespace tails to a real catalog entry case-insensitively. We index by
-    # the trailing path segment of the namespace, which Ed-Fi guarantees is
-    # exactly the child descriptor table's name (e.g. "OldEthnicityDescriptor").
-    child_by_typename: dict[str, str] = {}
-    for e in entries:
-        if e.is_descriptor and e.schema == "edfi":
-            child_by_typename[e.table.lower()] = e.fqn
+    # Build a child-resolver based on the operator's chosen strategy.
+    # All three strategies map a namespace value (whatever shape the
+    # operator's master uses) to the matching child catalog fqn.
+    child_by_typename: dict[str, str] = {
+        e.table.lower(): e.fqn for e in entries if e.is_descriptor
+    }
+
+    def _resolve_child(ns: str) -> tuple[str, str]:
+        """Returns (type_name, child_fqn). Both may be empty when
+        unresolvable — the resolver just won't emit a join hint for that
+        code, which is the right graceful-degrade behavior."""
+        ns = (ns or "").strip()
+        if not ns:
+            return "", ""
+        if cfg.child_resolution == "explicit_map":
+            child_fqn = cfg.explicit_children.get(ns, "")
+            return ns.rsplit("/", 1)[-1], child_fqn
+        if cfg.child_resolution == "name_suffix":
+            tail = ns
+            return tail, child_by_typename.get(tail.lower(), "")
+        # default: namespace_tail (Ed-Fi convention)
+        tail = ns.rsplit("/", 1)[-1]
+        return tail, child_by_typename.get(tail.lower(), "")
 
     out: list[DescriptorCode] = []
     for r in rows:
-        ns = (r.get("namespace") or "").strip()
-        type_name = ns.rsplit("/", 1)[-1] if ns else ""
-        child_fqn = child_by_typename.get(type_name.lower()) if type_name else None
+        type_name, child_fqn = _resolve_child(r.get("namespace") or "")
+        try:
+            descriptor_id = int(r["descriptor_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
         out.append(DescriptorCode(
-            descriptor_id=int(r["descriptor_id"]),
+            descriptor_id=descriptor_id,
             code_value=str(r.get("code_value") or ""),
             short_description=str(r.get("short_description") or ""),
             description=str(r.get("description") or ""),
-            namespace=ns,
+            namespace=str(r.get("namespace") or ""),
             type_name=type_name,
-            child_fqn=child_fqn or "",
+            child_fqn=child_fqn,
         ))
     return out
 

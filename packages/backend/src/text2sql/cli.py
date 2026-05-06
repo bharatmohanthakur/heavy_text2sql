@@ -222,6 +222,7 @@ def build_table_catalog_cmd(
         synthesize_inputs_for_builder,
     )
     from text2sql.config import resolve_artifact_path
+    from text2sql.table_catalog.descriptor_config import load_overrides as load_desc_overrides
 
     csv_dir = resolve_artifact_path(cfg, "catalog_inputs/.exists").parent
     schema_csv = csv_dir / "schema.csv"
@@ -235,9 +236,15 @@ def build_table_catalog_cmd(
         )
         sys.exit(1)
     typer.echo(f"Catalog inputs (CSVs): {csv_dir}")
+    desc_cfg = load_desc_overrides(REPO_ROOT / "configs" / "domain_overrides.yaml")
+    if desc_cfg.enabled:
+        typer.echo(f"Descriptor layer:      master={desc_cfg.master_fqn} "
+                   f"({desc_cfg.child_resolution})")
+    else:
+        typer.echo("Descriptor layer:      disabled by override")
     inputs = CatalogInputs.from_csvs(schema_csv, rel_csv)
     catalog_index, classifications, manifest = synthesize_inputs_for_builder(
-        inputs, sql_engine=engine,
+        inputs, sql_engine=engine, descriptor_config=desc_cfg,
     )
     typer.echo(
         f"Synthesized: {inputs.table_count} tables · "
@@ -249,6 +256,7 @@ def build_table_catalog_cmd(
         sql_engine=engine,
         description_generator=desc_gen,
         only_fqns=only_set,
+        descriptor_config=desc_cfg,
     )
     save_table_catalog(catalog, REPO_ROOT / out)
 
