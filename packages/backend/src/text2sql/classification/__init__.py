@@ -13,6 +13,7 @@ Two distinct sub-components:
 """
 
 from text2sql.classification.catalog import DomainCatalog, load_domain_catalog
+from text2sql.classification.embedding_classifier import EmbeddingDomainClassifier
 from text2sql.classification.query_classifier import (
     QueryClassification,
     QueryDomainClassifier,
@@ -27,6 +28,7 @@ from text2sql.classification.table_mapping import (
 
 __all__ = [
     "DomainCatalog",
+    "EmbeddingDomainClassifier",
     "QueryClassification",
     "QueryDomainClassifier",
     "TableClassification",

@@ -604,7 +604,7 @@ def _load_runtime_inputs(cfg):
 
 def _build_pipeline():
     """Wire all components from config."""
-    from text2sql.classification import QueryDomainClassifier
+    from text2sql.classification import EmbeddingDomainClassifier
     from text2sql.embedding import TableRetriever
     from text2sql.entity_resolution import EntityResolver, build_value_index
     from text2sql.gold import GoldStore
@@ -630,14 +630,20 @@ def _build_pipeline():
     description_llm = build_llm(cfg.llm_for_task("description"))
     classifier_llm = build_llm(cfg.llm_for_task("classifier_fallback"))
 
-    domain_classifier = QueryDomainClassifier(
-        classifier_llm, domain_catalog,
-        cache_path=REPO_ROOT / "data/artifacts/.query_classification_cache.json",
-    )
     retriever = TableRetriever(embedder, store)
     value_index = build_value_index(catalog)
     entity_resolver = EntityResolver(
         value_index, embedder=embedder, store=store, llm=classifier_llm,
+    )
+    # Domain routing — search-and-score over the actual catalog plus
+    # entity-resolution confirmation, instead of a hand-curated 3-seed-
+    # tables-per-domain LLM prompt. Operator declares the domain set in
+    # the Schema CSV; the catalog payload (`domains`) is the only label
+    # source. Cached on disk by hash(query + catalog signature).
+    domain_classifier = EmbeddingDomainClassifier(
+        retriever, catalog,
+        entity_resolver=entity_resolver,
+        cache_path=REPO_ROOT / "data/artifacts/.query_classification_cache.json",
     )
 
     gold_store = None
@@ -671,7 +677,7 @@ def _build_agent_runner():
     is unreachable (the agent loop needs Postgres for conversation history).
     """
     from text2sql.agent import AgentRunner, ConversationStore, ToolContext
-    from text2sql.classification import QueryDomainClassifier
+    from text2sql.classification import EmbeddingDomainClassifier
     from text2sql.embedding import TableRetriever
     from text2sql.entity_resolution import EntityResolver, build_value_index
     from text2sql.gold import GoldStore
@@ -701,12 +707,12 @@ def _build_agent_runner():
         catalog = _filter_catalog_to_live_db(catalog, sql_engine)
     except Exception as e:
         typer.echo(f"(live-db catalog filter failed: {e}; using full catalog)", err=True)
-    domain_classifier = QueryDomainClassifier(
-        llm, domain_catalog, cache_path=None,
-    )
     retriever = TableRetriever(embedder, store)
     value_index = build_value_index(catalog)
     entity_resolver = EntityResolver(value_index, embedder=embedder, store=store, llm=llm)
+    domain_classifier = EmbeddingDomainClassifier(
+        retriever, catalog, entity_resolver=entity_resolver, cache_path=None,
+    )
 
     try:
         sa_url = _metadata_sa_url(cfg)
