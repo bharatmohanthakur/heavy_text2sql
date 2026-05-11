@@ -20,7 +20,26 @@ from text2sql.providers.factory import register_vector
 class FaissStore(VectorStore):
     def __init__(self, spec: ProviderEntry) -> None:
         cfg = spec.model_dump()
-        self._root = Path(cfg["path"])
+        # Resolve the on-disk root through the per-provider artifact layout so
+        # each active target_db gets its own FAISS index. Without this every
+        # provider shared `data/artifacts/vector/`, so switching active
+        # target left the agent retrieving embeddings from the previous
+        # provider's catalog (e.g. sqlite-demo's 6 tables) regardless of
+        # what the runner thought it was wired to.
+        configured = Path(cfg["path"])
+        try:
+            from text2sql.config import REPO_ROOT, load_config, resolve_artifact_path
+            live_cfg = load_config()
+            # Use the basename of the configured path so the operator's
+            # YAML key (`path: data/artifacts/vector`) maps cleanly to
+            # `data/artifacts/per_provider/<active>/vector/`.
+            rel = configured.relative_to(REPO_ROOT) if configured.is_absolute() else configured
+            resolved = resolve_artifact_path(live_cfg, rel.name + "/.exists", write=True).parent
+            self._root = resolved
+        except Exception:
+            # Fall back to the flat configured path so non-provider-aware
+            # callers (tests, legacy deployments) keep working.
+            self._root = configured
         self._root.mkdir(parents=True, exist_ok=True)
         self._collections: dict[str, _Collection] = {}
 
