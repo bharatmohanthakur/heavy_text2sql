@@ -698,15 +698,13 @@ def _build_agent_runner():
     sql_engine = build_sql_engine(cfg.target_db_provider())
     llm = build_llm(cfg.llm_for_task("classifier_fallback"))
 
-    # Filter the catalog down to what actually exists in the live DB —
-    # mirrors what Text2SqlPipeline does at startup. Without this the agent's
-    # inspect_table happily returns metadata for tables that the populated
-    # container never had (e.g. StudentDemographic in Northridge).
-    try:
-        from text2sql.pipeline.orchestrator import _filter_catalog_to_live_db
-        catalog = _filter_catalog_to_live_db(catalog, sql_engine)
-    except Exception as e:
-        typer.echo(f"(live-db catalog filter failed: {e}; using full catalog)", err=True)
+    # Build components against the FULL catalog — matches `/query`'s
+    # `_build_pipeline` exactly. The previous code here ran
+    # `_filter_catalog_to_live_db` first, which on SQLite (case-mismatch,
+    # `main` vs `edfi` schema, or any list_tables hiccup) dropped every
+    # entry and made `search_tables` / `inspect_table` return nothing.
+    # If the live DB drops tables at query time the validator + repair
+    # loop catch it — same fail-safe `/query` relies on.
     retriever = TableRetriever(embedder, store)
     value_index = build_value_index(catalog)
     entity_resolver = EntityResolver(value_index, embedder=embedder, store=store, llm=llm)

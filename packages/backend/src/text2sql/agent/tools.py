@@ -210,12 +210,12 @@ def _search_tables_handler(args: dict[str, Any], ctx: ToolContext) -> ToolResult
     if not query:
         return ToolResult(ok=False, error="query is empty")
     # Pull k+10 raw hits, then drop any that aren't in the live-DB-filtered
-    # catalog (the embeddings index is built from the full metadata catalog,
-    # so it still surfaces tables that were dropped by the live-DB filter
-    # like StudentDemographic).
+    # catalog. We don't pre-filter against the live DB here — `/chat` now
+    # uses the same unfiltered catalog as `/query`, and the validator +
+    # repair loop downstream catches any reference to a missing table
+    # (same contract as the sync query path).
     raw_hits = ctx.retriever.search(query, k=k + 10, domains=domains, hybrid=True)
-    by_fqn = ctx.catalog.by_fqn() if ctx.catalog is not None else {}
-    hits = [h for h in raw_hits if not by_fqn or h.fqn in by_fqn][:k]
+    hits = raw_hits[:k]
 
     # Mirror old pipeline stages [3]+[4]: run Steiner over the top-k hits
     # (plus inheritance bases / Descriptor bridge) so the agent receives a
