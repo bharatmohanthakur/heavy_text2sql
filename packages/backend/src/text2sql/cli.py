@@ -471,6 +471,35 @@ def serve(
         # /admin/* (Settings / Rebuild) works.
         typer.echo(f"(agent unavailable: {e})", err=True)
         agent_runner, conv_store = None, None
+
+    # Provider-aware agent loader. Mirrors `catalog_loader` for /query:
+    # /chat resolves the runner per-request and rebuilds when the active
+    # `target_db.primary` (or `embeddings.primary`) changes via Settings.
+    # Cached by (active_target, active_embedder, catalog_mtime) so a hot
+    # rebuild only happens on actual provider/catalog switch.
+    _runner_cache: dict[tuple[str, str, float], object] = {}
+
+    def _load_active_runner():
+        live_cfg = load_config()
+        target = live_cfg.target_db.primary
+        embed = live_cfg.embeddings.primary
+        try:
+            mtime = resolve_artifact_path(live_cfg, "table_catalog.json").stat().st_mtime
+        except FileNotFoundError:
+            mtime = 0.0
+        key = (target, embed, mtime)
+        cached = _runner_cache.get(key)
+        if cached is None:
+            try:
+                runner, _ = _build_agent_runner()
+            except Exception as e:
+                typer.echo(f"(agent rebuild failed: {e}; using startup runner)", err=True)
+                return agent_runner
+            _runner_cache.clear()
+            _runner_cache[key] = runner
+            cached = runner
+        return cached  # type: ignore[return-value]
+
     fastapi_app = build_app(
         pipeline=pipeline,
         catalog=catalog,
@@ -478,6 +507,7 @@ def serve(
         agent_runner=agent_runner,
         conv_store=conv_store,
         catalog_loader=_load_active_catalog,
+        agent_runner_loader=_load_active_runner,
     )
     uvicorn.run(fastapi_app, host=host, port=port, reload=reload, log_level="info")
 

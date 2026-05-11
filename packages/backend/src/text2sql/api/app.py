@@ -116,6 +116,7 @@ def build_app(
     agent_runner: AgentRunner | None = None,
     conv_store: ConversationStore | None = None,
     catalog_loader: Callable[[], TableCatalog | None] | None = None,
+    agent_runner_loader: Callable[[], AgentRunner | None] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Ed-Fi Text-to-SQL", version="0.1.0")
     app.add_middleware(
@@ -330,7 +331,21 @@ def build_app(
             return rec.to_dict()
 
     # ── Agentic chat (multi-turn, streaming) ────────────────────────────────
-    if agent_runner is not None and conv_store is not None:
+    # Resolve the runner on every request so mid-flight `target_db.primary`
+    # swaps via Settings → overlay rebuild the ToolContext (catalog +
+    # sql_engine + retriever + entity_resolver). Mirrors what
+    # `catalog_loader` does for /query.
+    def _runner() -> AgentRunner | None:
+        if agent_runner_loader is None:
+            return agent_runner
+        try:
+            return agent_runner_loader() or agent_runner
+        except Exception as e:
+            log.warning("agent_runner_loader failed; falling back to startup runner: %s", e)
+            return agent_runner
+
+    _has_chat = (agent_runner is not None or agent_runner_loader is not None) and conv_store is not None
+    if _has_chat:
         @app.get("/conversations")
         def list_conversations(limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
             convs = conv_store.list_conversations(limit=limit)
@@ -381,8 +396,11 @@ def build_app(
 
         @app.post("/chat")
         async def chat(req: ChatRequest) -> dict[str, Any]:
+            runner = _runner()
+            if runner is None:
+                raise HTTPException(503, detail="agent runner unavailable")
             result = await asyncio.to_thread(
-                agent_runner.run, req.conversation_id, req.message,
+                runner.run, req.conversation_id, req.message,
             )
             return {
                 "conversation_id": str(result.conversation_id),
@@ -418,9 +436,12 @@ def build_app(
             """
             queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
+            runner = _runner()
+            if runner is None:
+                raise HTTPException(503, detail="agent runner unavailable")
             def _producer() -> None:
                 try:
-                    for ev in agent_runner.run_stream(req.conversation_id, req.message):
+                    for ev in runner.run_stream(req.conversation_id, req.message):
                         asyncio.run_coroutine_threadsafe(queue.put(ev), loop).result()
                 except Exception as e:
                     asyncio.run_coroutine_threadsafe(
